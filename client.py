@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import scrolledtext, messagebox, filedialog, Toplevel, Listbox, simpledialog, colorchooser
 from datetime import datetime
 import os
+import sys
 import re
 import json
 import time
@@ -12,10 +13,16 @@ import base64
 import hashlib
 import struct
 
+# ========== ОПРЕДЕЛЕНИЕ ПУТИ ДЛЯ .EXE ==========
+if getattr(sys, 'frozen', False):
+    APP_DIR = os.path.dirname(sys.executable)
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+# =============================================
+
 class ChatClient:
-    VERSION = "0.43.6"
-    #Скоро релиз :3
-    #Ждёмс
+    VERSION = "1.0.0"
+    
     def __init__(self):
         self.sock = None
         self.nickname = None
@@ -28,20 +35,23 @@ class ChatClient:
         self.private_messages = {}
         self.private_files = {}
         self.files_list = []
-        self.config_file = "chat_config.ini"
+        self.config_file = os.path.join(APP_DIR, "chat_config.ini")
         self.saved_username = ""
         self.saved_password = ""
         self.save_auth = False
         self.clicked_index = None
         self.nick_colors = {}
-        self.custom_colors_file = "nick_colors.json"
+        self.custom_colors_file = os.path.join(APP_DIR, "nick_colors.json")
         self.auth_window = None
         self.auth_success = False
         self.current_chat = "general"
         self.private_chats_list = set()
+        self.online_users = set()
+        self.logo_image = None
         
         print("=" * 50)
         print(f"🚀 ЗАПУСК КЛИЕНТА ЧАТА v{self.VERSION}")
+        print(f"📂 Папка данных: {APP_DIR}")
         print("=" * 50)
         
         self.load_nick_colors()
@@ -58,6 +68,7 @@ class ChatClient:
         self.setup_gui()
         
         self.root.after(1000, self.load_files_list)
+        self.root.after(500, self.request_online_users)
         
         receive_thread = threading.Thread(target=self.receive_messages, daemon=True)
         receive_thread.start()
@@ -66,44 +77,12 @@ class ChatClient:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.mainloop()
     
-    # ========== СОХРАНЕНИЕ ЧАТОВ ==========
-    def load_chats_list(self):
-        chats_file = "private_chats.json"
-        if os.path.exists(chats_file):
-            try:
-                with open(chats_file, 'r', encoding='utf-8') as f:
-                    self.private_chats_list = set(json.load(f))
-                print(f"✅ Загружено {len(self.private_chats_list)} личных чатов")
-            except:
-                pass
-    
-    def save_chats_list(self):
-        chats_file = "private_chats.json"
+    def request_online_users(self):
         try:
-            with open(chats_file, 'w', encoding='utf-8') as f:
-                json.dump(list(self.private_chats_list), f, ensure_ascii=False, indent=2)
+            self.sock.send(b"CMD:ONLINE\n")
+            self.root.after(5000, self.request_online_users)
         except:
             pass
-    
-    def load_private_messages(self, nick):
-        pm_file = f"pm_{self.nickname}_{nick}.json"
-        if os.path.exists(pm_file):
-            try:
-                with open(pm_file, 'r', encoding='utf-8') as f:
-                    self.private_messages[nick] = json.load(f)
-            except:
-                self.private_messages[nick] = []
-        else:
-            self.private_messages[nick] = []
-    
-    def save_private_messages(self, nick):
-        if nick in self.private_messages:
-            pm_file = f"pm_{self.nickname}_{nick}.json"
-            try:
-                with open(pm_file, 'w', encoding='utf-8') as f:
-                    json.dump(self.private_messages[nick], f, ensure_ascii=False, indent=2)
-            except:
-                pass
     
     # ========== ЦВЕТА НИКОВ ==========
     def load_nick_colors(self):
@@ -149,6 +128,43 @@ class ChatClient:
             self.add_system_message(f"🎨 Цвет вашего ника изменён")
     
     # ========== КОНФИГУРАЦИЯ ==========
+    def load_chats_list(self):
+        chats_file = os.path.join(APP_DIR, "private_chats.json")
+        if os.path.exists(chats_file):
+            try:
+                with open(chats_file, 'r', encoding='utf-8') as f:
+                    self.private_chats_list = set(json.load(f))
+            except:
+                pass
+    
+    def save_chats_list(self):
+        chats_file = os.path.join(APP_DIR, "private_chats.json")
+        try:
+            with open(chats_file, 'w', encoding='utf-8') as f:
+                json.dump(list(self.private_chats_list), f, ensure_ascii=False, indent=2)
+        except:
+            pass
+    
+    def load_private_messages(self, nick):
+        pm_file = os.path.join(APP_DIR, f"pm_{self.nickname}_{nick}.json")
+        if os.path.exists(pm_file):
+            try:
+                with open(pm_file, 'r', encoding='utf-8') as f:
+                    self.private_messages[nick] = json.load(f)
+            except:
+                self.private_messages[nick] = []
+        else:
+            self.private_messages[nick] = []
+    
+    def save_private_messages(self, nick):
+        if nick in self.private_messages:
+            pm_file = os.path.join(APP_DIR, f"pm_{self.nickname}_{nick}.json")
+            try:
+                with open(pm_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.private_messages[nick], f, ensure_ascii=False, indent=2)
+            except:
+                pass
+    
     def load_config(self):
         if os.path.exists(self.config_file):
             try:
@@ -517,6 +533,7 @@ class ChatClient:
                 pass
             
             self.root.after(0, self.update_files_listbox)
+            self.root.after(0, lambda: self.add_system_message("🔄 Список файлов обновлён"))
             
         except Exception as e:
             print(f"Ошибка загрузки файлов: {e}")
@@ -698,6 +715,10 @@ class ChatClient:
         tk.Label(left_panel, text="💬 ЧАТЫ", font=("Segoe UI", 11, "bold"), 
                  bg=self.colors['sidebar'], fg='#4ec9b0').pack(pady=(10, 5))
         
+        self.online_label = tk.Label(left_panel, text="🟢 Онлайн: 0", font=("Segoe UI", 9),
+                                      bg=self.colors['sidebar'], fg='#6a9955')
+        self.online_label.pack(pady=(0, 5))
+        
         self.chats_listbox = Listbox(left_panel, bg=self.colors['chat_bg'], fg=self.colors['text'], 
                                       font=("Segoe UI", 10), relief=tk.FLAT, selectbackground='#264f78',
                                       selectforeground='white', height=15)
@@ -747,8 +768,6 @@ class ChatClient:
                                        fg=self.colors['text'], relief=tk.FLAT, insertbackground=self.colors['text'])
         self.message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         self.message_entry.bind("<Return>", self.send_message)
-        
-        # Правильная привязка вставки
         self.message_entry.bind("<Control-v>", self.paste_text)
         self.message_entry.bind("<Control-V>", self.paste_text)
         self.message_entry.bind("<<Paste>>", self.paste_text)
@@ -781,9 +800,16 @@ class ChatClient:
                                       selectforeground='white', height=25)
         self.files_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        tk.Button(right_panel, text="⬇️ Скачать", command=self.download_selected_file,
+        files_btn_frame = tk.Frame(right_panel, bg=self.colors['sidebar'])
+        files_btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Button(files_btn_frame, text="⬇️ Скачать", command=self.download_selected_file,
                   bg=self.colors['file_button'], fg="white", font=("Segoe UI", 10, "bold"), 
-                  relief=tk.FLAT, cursor="hand2").pack(fill=tk.X, padx=5, pady=5)
+                  relief=tk.FLAT, cursor="hand2").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        
+        tk.Button(files_btn_frame, text="🔄 Обновить", command=self.load_files_list,
+                  bg=self.colors['button'], fg="white", font=("Segoe UI", 10, "bold"), 
+                  relief=tk.FLAT, cursor="hand2").pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
         
         self.chat_context_menu = tk.Menu(self.root, tearoff=0, bg='#3c3c3c', fg='white', activebackground='#0e639c')
         self.chat_context_menu.add_command(label="📋 Копировать", command=self.copy_from_chat)
@@ -791,7 +817,6 @@ class ChatClient:
         self.chat_context_menu.add_command(label="💬 Личное сообщение", command=self.start_private_chat)
         self.chat_area.bind("<Button-3>", self.show_chat_context_menu)
         
-        # Контекстное меню для поля ввода
         self.entry_context_menu = tk.Menu(self.root, tearoff=0, bg='#3c3c3c', fg='white', activebackground='#0e639c')
         self.entry_context_menu.add_command(label="📋 Вставить", command=self.paste_text)
         self.entry_context_menu.add_command(label="📋 Копировать", command=self.copy_from_entry)
@@ -813,7 +838,6 @@ class ChatClient:
                 self.root.clipboard_clear()
                 self.root.clipboard_append(selected)
         except:
-            # Если нет выделения, копируем всё
             text = self.message_entry.get()
             if text:
                 self.root.clipboard_clear()
@@ -828,6 +852,9 @@ class ChatClient:
                 self.message_entry.delete(tk.SEL_FIRST, tk.SEL_LAST)
         except:
             pass
+    
+    def update_online_label(self):
+        self.online_label.config(text=f"🟢 Онлайн: {len(self.online_users)}")
     
     def update_chats_list(self):
         self.chats_listbox.delete(0, tk.END)
@@ -930,17 +957,15 @@ class ChatClient:
             pass
     
     def paste_text(self, event=None):
-        """Вставка текста из буфера обмена"""
         try:
             clipboard_text = self.root.clipboard_get()
             if clipboard_text:
-                # Удаляем возможные переводы строк в конце
                 clipboard_text = clipboard_text.rstrip('\n\r')
                 cursor_pos = self.message_entry.index(tk.INSERT)
                 self.message_entry.insert(cursor_pos, clipboard_text)
         except:
             pass
-        return "break"  # Предотвращаем двойную вставку
+        return "break"
     
     def open_link(self, event):
         index = self.chat_area.index(f"@{event.x},{event.y}")
@@ -1117,7 +1142,8 @@ class ChatClient:
                     self.add_system_message(f"🎨 Цвет ника изменён на {color}")
         elif text == "/refresh":
             self.load_files_list()
-            self.add_system_message("🔄 Список файлов обновлён")
+        elif text == "/online":
+            self.request_online_users()
     
     # ========== ПОЛУЧЕНИЕ СООБЩЕНИЙ ==========
     def receive_messages(self):
@@ -1308,6 +1334,11 @@ class ChatClient:
                     self.nick_colors[nick] = color
                     self.save_nick_colors()
                     self.root.after(0, self.refresh_chat_display)
+                    
+                elif msg_type == "online_users":
+                    self.online_users = set(msg.get("users", []))
+                    self.root.after(0, self.update_online_label)
+                    print(f"🟢 Онлайн: {len(self.online_users)}")
                     
                 elif msg_type == "kicked":
                     self.root.after(0, lambda: messagebox.showerror("Кик", f"Вас отключили: {msg.get('reason')}"))
