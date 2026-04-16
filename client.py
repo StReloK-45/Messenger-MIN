@@ -1,5 +1,3 @@
-"""client.py | core"""
-
 import socket
 import threading
 import tkinter as tk
@@ -15,7 +13,7 @@ import hashlib
 import struct
 
 class ChatClient:
-    VERSION = "0.43.1"
+    VERSION = "0.43.4"
     
     def __init__(self):
         self.sock = None
@@ -25,8 +23,9 @@ class ChatClient:
         self.server_ip = "192.168.0.155"
         self.chat_port = 5555
         self.file_port = 5556
-        self.message_history = []  # История общего чата
-        self.private_messages = {}  # {nick: [messages]}
+        self.message_history = []
+        self.private_messages = {}
+        self.private_files = {}
         self.files_list = []
         self.config_file = "chat_config.ini"
         self.saved_username = ""
@@ -37,13 +36,13 @@ class ChatClient:
         self.custom_colors_file = "nick_colors.json"
         self.auth_window = None
         self.auth_success = False
-        self.current_chat = "general"  # "general" или ник пользователя
+        self.current_chat = "general"
         self.online_users = set()
-        self.private_chats_list = set()  # Список ников с кем есть личка
+        self.private_chats_list = set()
+        self.processing_lock = threading.Lock()
         
         print("=" * 50)
-        print(f"🚀 ЗАПУСК КЛИЕНТА ЧАТА")
-        print(f"Версия клиента {self.VERSION}")
+        print(f"🚀 ЗАПУСК КЛИЕНТА ЧАТА v{self.VERSION}")
         print("=" * 50)
         
         self.load_nick_colors()
@@ -59,7 +58,6 @@ class ChatClient:
         self.setup_gui()
         
         self.root.after(1000, self.load_files_list)
-        self.root.after(500, self.request_online_users)
         
         receive_thread = threading.Thread(target=self.receive_messages, daemon=True)
         receive_thread.start()
@@ -102,7 +100,7 @@ class ChatClient:
             self.sock.send(color_msg.encode('utf-8'))
         except:
             pass
-        self.refresh_chat_display()
+        self.root.after(0, self.refresh_chat_display)
     
     def change_my_color(self):
         current_color = self.nick_colors.get(self.nickname, '#4ec9b0')
@@ -196,13 +194,13 @@ class ChatClient:
             
             self.auth_window = tk.Toplevel()
             self.auth_window.title("Авторизация")
-            self.auth_window.geometry("400x550")
+            self.auth_window.geometry("400x580")
             self.auth_window.configure(bg='#1e1e1e')
             self.auth_window.transient()
             self.auth_window.grab_set()
             
             x = (self.auth_window.winfo_screenwidth() // 2) - 200
-            y = (self.auth_window.winfo_screenheight() // 2) - 275
+            y = (self.auth_window.winfo_screenheight() // 2) - 290
             self.auth_window.geometry(f"+{x}+{y}")
             
             self.auth_window.protocol("WM_DELETE_WINDOW", self.on_auth_close)
@@ -307,8 +305,43 @@ class ChatClient:
         tk.Button(self.auth_frame, text="Нет аккаунта? Зарегистрироваться", command=self.show_register,
                   bg='#1e1e1e', fg='#569cd6', font=("Segoe UI", 9), relief=tk.FLAT, cursor="hand2").pack()
         
+        tk.Button(self.auth_frame, text="🔑 Забыли пароль?", command=self.forgot_password,
+                  bg='#1e1e1e', fg='#ce9178', font=("Segoe UI", 9), relief=tk.FLAT, cursor="hand2").pack(pady=(5, 0))
+        
         login_entry.focus()
         pass_entry.bind("<Return>", lambda e: do_login())
+    
+    def forgot_password(self):
+        username = simpledialog.askstring("Восстановление пароля", "Введите ваш логин:")
+        if not username:
+            return
+        
+        try:
+            self.sock.send(f"CMD:FORGOT|{username}\n".encode('utf-8'))
+            self.set_status("⏳ Запрос отправлен...", False)
+            
+            self.sock.settimeout(10)
+            response = self.sock.recv(1024).decode('utf-8').strip()
+            self.sock.settimeout(None)
+            
+            if response.startswith("RECOVERY_CODE:"):
+                code = response.split(':')[1]
+                messagebox.showinfo("Код восстановления", 
+                    f"Код восстановления отправлен администратору.\n"
+                    f"Свяжитесь с администратором и сообщите ему:\n"
+                    f"Логин: {username}\n"
+                    f"Код: {code}")
+            elif response == "USER_NOT_FOUND":
+                messagebox.showerror("Ошибка", "Пользователь с таким логином не найден")
+            else:
+                messagebox.showerror("Ошибка", "Не удалось отправить запрос")
+                
+        except socket.timeout:
+            messagebox.showerror("Ошибка", "Сервер не отвечает")
+        except Exception as e:
+            messagebox.showerror("Ошибка", str(e))
+        finally:
+            self.sock.settimeout(None)
     
     def show_register(self):
         self.clear_frame()
@@ -394,13 +427,6 @@ class ChatClient:
         login_entry.focus()
         pass_entry.bind("<Return>", lambda e: do_register())
     
-    def request_online_users(self):
-        """Запрашивает список онлайн пользователей"""
-        try:
-            self.sock.send(b"CMD:ONLINE\n")
-        except:
-            pass
-    
     # ========== ФАЙЛОВЫЕ ФУНКЦИИ ==========
     def recv_exact(self, sock, size):
         data = b''
@@ -419,7 +445,14 @@ class ChatClient:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(10)
             sock.connect((self.server_ip, self.file_port))
-            sock.send(b'L')
+            
+            if self.current_chat == "general":
+                sock.send(b'L')
+            else:
+                sock.send(b'P')
+                nick_bytes = self.current_chat.encode('utf-8')
+                sock.send(struct.pack('>I', len(nick_bytes)))
+                sock.send(nick_bytes)
             
             size_data = self.recv_exact(sock, 4)
             if not size_data:
@@ -436,9 +469,13 @@ class ChatClient:
             sock.close()
             
             try:
-                self.files_list = json.loads(data_str)
+                files = json.loads(data_str)
+                if self.current_chat == "general":
+                    self.files_list = files
+                else:
+                    self.private_files[self.current_chat] = files
             except:
-                self.files_list = []
+                pass
             
             self.root.after(0, self.update_files_listbox)
             
@@ -448,10 +485,16 @@ class ChatClient:
     def update_files_listbox(self):
         if hasattr(self, 'files_listbox'):
             self.files_listbox.delete(0, tk.END)
-            if not self.files_list:
+            
+            if self.current_chat == "general":
+                files = self.files_list
+            else:
+                files = self.private_files.get(self.current_chat, [])
+            
+            if not files:
                 self.files_listbox.insert(tk.END, "📁 Нет файлов")
             else:
-                for f in self.files_list:
+                for f in files:
                     try:
                         size_kb = f.get('size', 0) / 1024
                         size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb/1024:.1f} MB"
@@ -467,9 +510,16 @@ class ChatClient:
         if not selection:
             return
         idx = selection[0]
-        if idx >= len(self.files_list):
+        
+        if self.current_chat == "general":
+            files = self.files_list
+        else:
+            files = self.private_files.get(self.current_chat, [])
+        
+        if idx >= len(files):
             return
-        file_info = self.files_list[idx]
+        
+        file_info = files[idx]
         if messagebox.askyesno("Скачать файл", f"Скачать файл '{file_info.get('name', 'file')}'?"):
             threading.Thread(target=self.download_file, args=(file_info['id'], file_info['name']), daemon=True).start()
     
@@ -547,7 +597,13 @@ class ChatClient:
             sock.settimeout(60)
             sock.connect((self.server_ip, self.file_port))
             
-            sock.send(b'U')
+            if self.current_chat == "general":
+                sock.send(b'U')
+            else:
+                sock.send(b'V')
+                target_bytes = self.current_chat.encode('utf-8')
+                sock.send(struct.pack('>I', len(target_bytes)))
+                sock.send(target_bytes)
             
             name_bytes = filename.encode('utf-8')
             sock.send(struct.pack('>I', len(name_bytes)))
@@ -581,7 +637,7 @@ class ChatClient:
     # ========== GUI ==========
     def setup_gui(self):
         self.root = tk.Tk()
-        self.root.title(f"💬 Чат - {self.nickname}")
+        self.root.title(f"💬 Чат - {self.nickname} v{self.VERSION}")
         self.root.geometry("1100x700")
         self.root.configure(bg='#1e1e1e')
         
@@ -592,7 +648,6 @@ class ChatClient:
             'button': '#0e639c', 'file_button': '#6a9955', 'color_button': '#9c3e9c'
         }
         
-        # Главный контейнер
         main_frame = tk.Frame(self.root, bg=self.colors['bg'])
         main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
@@ -601,18 +656,15 @@ class ChatClient:
         left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
         left_panel.pack_propagate(False)
         
-        # Заголовок чатов
         tk.Label(left_panel, text="💬 ЧАТЫ", font=("Segoe UI", 11, "bold"), 
                  bg=self.colors['sidebar'], fg='#4ec9b0').pack(pady=(10, 5))
         
-        # Список чатов
         self.chats_listbox = Listbox(left_panel, bg=self.colors['chat_bg'], fg=self.colors['text'], 
                                       font=("Segoe UI", 10), relief=tk.FLAT, selectbackground='#264f78',
                                       selectforeground='white', height=15)
         self.chats_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.chats_listbox.bind('<<ListboxSelect>>', self.on_chat_select)
         
-        # Кнопки под чатами
         chat_buttons_frame = tk.Frame(left_panel, bg=self.colors['sidebar'])
         chat_buttons_frame.pack(fill=tk.X, padx=5, pady=5)
         
@@ -624,16 +676,14 @@ class ChatClient:
                   bg=self.colors['button'], fg="white", font=("Segoe UI", 9), 
                   relief=tk.FLAT, cursor="hand2").pack(fill=tk.X, pady=2)
         
-        # ========== ЦЕНТРАЛЬНАЯ ПАНЕЛЬ (ОБЛАСТЬ ЧАТА) ==========
+        # ========== ЦЕНТРАЛЬНАЯ ПАНЕЛЬ ==========
         center_panel = tk.Frame(main_frame, bg=self.colors['bg'])
         center_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Заголовок текущего чата
         self.chat_header = tk.Label(center_panel, text="💬 ОБЩИЙ ЧАТ", font=("Segoe UI", 12, "bold"),
                                      bg=self.colors['chat_bg'], fg='#4ec9b0', height=2)
         self.chat_header.pack(fill=tk.X, pady=(0, 5))
         
-        # Область сообщений
         self.chat_area = scrolledtext.ScrolledText(center_panel, wrap=tk.WORD, state='normal', 
                                                     bg=self.colors['chat_bg'], fg=self.colors['text'], 
                                                     font=("Segoe UI", 10), relief=tk.FLAT, borderwidth=0, 
@@ -641,15 +691,16 @@ class ChatClient:
                                                     selectforeground='white')
         self.chat_area.pack(fill=tk.BOTH, expand=True)
         
-        # Теги для форматирования
         self.chat_area.tag_config("time", foreground=self.colors['time'], font=("Segoe UI", 8))
         self.chat_area.tag_config("server", foreground=self.colors['server'], font=("Segoe UI", 10, "bold"))
         self.chat_area.tag_config("system", foreground=self.colors['system'], font=("Segoe UI", 10, "italic"))
         self.chat_area.tag_config("error", foreground=self.colors['error'], font=("Segoe UI", 10, "bold"))
+        
         self.chat_area.tag_config("link", foreground="#569cd6", underline=True)
         self.chat_area.tag_bind("link", "<Button-1>", self.open_link)
+        self.chat_area.tag_bind("link", "<Enter>", lambda e: self.chat_area.config(cursor="hand2"))
+        self.chat_area.tag_bind("link", "<Leave>", lambda e: self.chat_area.config(cursor=""))
         
-        # Панель ввода
         input_frame = tk.Frame(center_panel, bg=self.colors['bg'])
         input_frame.pack(fill=tk.X, pady=(5, 0))
         
@@ -658,9 +709,7 @@ class ChatClient:
         self.message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         self.message_entry.bind("<Return>", self.send_message)
         self.message_entry.bind("<Control-v>", lambda e: self.paste_text())
-        self.message_entry.bind("<Control-V>", lambda e: self.paste_text())
         
-        # Кнопки под вводом
         button_frame = tk.Frame(center_panel, bg=self.colors['bg'])
         button_frame.pack(fill=tk.X, pady=(5, 0))
         
@@ -693,22 +742,15 @@ class ChatClient:
                   bg=self.colors['file_button'], fg="white", font=("Segoe UI", 10, "bold"), 
                   relief=tk.FLAT, cursor="hand2").pack(fill=tk.X, padx=5, pady=5)
         
-        # Контекстное меню для чата
         self.chat_context_menu = tk.Menu(self.root, tearoff=0, bg='#3c3c3c', fg='white', activebackground='#0e639c')
         self.chat_context_menu.add_command(label="📋 Копировать", command=self.copy_from_chat)
         self.chat_context_menu.add_command(label="✏️ Редактировать", command=self.edit_selected_message)
         self.chat_context_menu.add_command(label="💬 Личное сообщение", command=self.start_private_chat)
-        self.chat_context_menu.add_separator()
-        self.chat_context_menu.add_command(label="🔇 Мут", command=lambda: self.admin_action("mute"))
-        self.chat_context_menu.add_command(label="👢 Кик", command=lambda: self.admin_action("kick"))
-        self.chat_context_menu.add_command(label="🚫 Бан", command=lambda: self.admin_action("ban"))
         self.chat_area.bind("<Button-3>", self.show_chat_context_menu)
         
-        # Инициализация списка чатов
         self.update_chats_list()
     
     def update_chats_list(self):
-        """Обновляет список чатов в левой панели"""
         self.chats_listbox.delete(0, tk.END)
         self.chats_listbox.insert(tk.END, "💬 ОБЩИЙ ЧАТ")
         self.chats_listbox.itemconfig(0, {'bg': '#264f78', 'fg': 'white'})
@@ -719,7 +761,6 @@ class ChatClient:
                 self.chats_listbox.insert(tk.END, display)
     
     def on_chat_select(self, event):
-        """Обработчик выбора чата"""
         selection = self.chats_listbox.curselection()
         if not selection:
             return
@@ -732,13 +773,13 @@ class ChatClient:
             nick = self.chats_listbox.get(idx).replace("👤 ", "")
             self.current_chat = nick
             self.chat_header.config(text=f"💬 ЛИЧНЫЕ СООБЩЕНИЯ С {nick}")
+            self.sock.send(f"CMD:GET_PM_HISTORY|{nick}\n".encode('utf-8'))
         
         self.refresh_chat_display()
+        self.load_files_list()
     
     def start_private_chat(self, target=None):
-        """Начинает личный чат с пользователем"""
         if target is None:
-            # Пытаемся получить ник из выделенного сообщения
             try:
                 line_start = self.chat_area.index(f"{self.clicked_index} linestart")
                 line_text = self.chat_area.get(line_start, f"{self.clicked_index} lineend")
@@ -751,9 +792,9 @@ class ChatClient:
             if target not in self.private_chats_list:
                 self.private_chats_list.add(target)
                 self.private_messages[target] = []
+                self.private_files[target] = []
                 self.update_chats_list()
             
-            # Переключаемся на этот чат
             for i in range(self.chats_listbox.size()):
                 if self.chats_listbox.get(i) == f"👤 {target}":
                     self.chats_listbox.selection_clear(0, tk.END)
@@ -761,31 +802,6 @@ class ChatClient:
                     self.chats_listbox.activate(i)
                     self.on_chat_select(None)
                     break
-    
-    def admin_action(self, action):
-        """Выполняет админ-действие над выбранным пользователем"""
-        if self.current_chat != "general":
-            messagebox.showwarning("Внимание", "Админ-команды работают только в общем чате")
-            return
-        
-        try:
-            line_start = self.chat_area.index(f"{self.clicked_index} linestart")
-            line_text = self.chat_area.get(line_start, f"{self.clicked_index} lineend")
-            if "👤" in line_text:
-                target = line_text.split("👤")[1].split(":")[0].strip()
-                
-                if action == "mute":
-                    minutes = simpledialog.askinteger("Мут", f"На сколько минут замутить {target}?", minvalue=1, maxvalue=1440)
-                    if minutes:
-                        self.sock.send(f"CMD:ADMIN|mute|{target}|{minutes}\n".encode('utf-8'))
-                elif action == "kick":
-                    if messagebox.askyesno("Кик", f"Кикнуть {target}?"):
-                        self.sock.send(f"CMD:ADMIN|kick|{target}|Кикнут\n".encode('utf-8'))
-                elif action == "ban":
-                    if messagebox.askyesno("Бан", f"Забанить {target}?"):
-                        self.sock.send(f"CMD:ADMIN|ban|{target}|Забанен\n".encode('utf-8'))
-        except:
-            pass
     
     def edit_selected_message(self):
         try:
@@ -809,17 +825,6 @@ class ChatClient:
     def show_chat_context_menu(self, event):
         try:
             self.clicked_index = self.chat_area.index(f"@{event.x},{event.y}")
-            
-            # Показываем админ-пункты только в общем чате
-            if self.current_chat == "general":
-                self.chat_context_menu.entryconfig("🔇 Мут", state="normal")
-                self.chat_context_menu.entryconfig("👢 Кик", state="normal")
-                self.chat_context_menu.entryconfig("🚫 Бан", state="normal")
-            else:
-                self.chat_context_menu.entryconfig("🔇 Мут", state="disabled")
-                self.chat_context_menu.entryconfig("👢 Кик", state="disabled")
-                self.chat_context_menu.entryconfig("🚫 Бан", state="disabled")
-            
             self.chat_context_menu.post(event.x_root, event.y_root)
         except:
             pass
@@ -853,7 +858,7 @@ class ChatClient:
         if time_str:
             self.chat_area.insert(tk.END, f"[{time_str}] ", "time")
         
-        url_pattern = r'(https?://[^\s]+|www\.[^\s]+)'
+        url_pattern = r'(https?://[^\s<>"{}|\\^`\[\]]+|www\.[^\s<>"{}|\\^`\[\]]+)'
         last_end = 0
         
         for match in re.finditer(url_pattern, text):
@@ -861,10 +866,15 @@ class ChatClient:
                 self.chat_area.insert(tk.END, text[last_end:match.start()], tag_name)
             
             url = match.group(0)
-            if not url.startswith('http'):
-                url = 'http://' + url
-            self.chat_area.insert(tk.END, match.group(0), f"url:{url}")
-            self.chat_area.tag_config(f"url:{url}", foreground="#569cd6", underline=True)
+            full_url = url if url.startswith('http') else 'http://' + url
+            
+            tag_url = f"url:{full_url}"
+            self.chat_area.tag_config(tag_url, foreground="#569cd6", underline=True)
+            self.chat_area.tag_bind(tag_url, "<Button-1>", lambda e, u=full_url: webbrowser.open(u))
+            self.chat_area.tag_bind(tag_url, "<Enter>", lambda e: self.chat_area.config(cursor="hand2"))
+            self.chat_area.tag_bind(tag_url, "<Leave>", lambda e: self.chat_area.config(cursor=""))
+            
+            self.chat_area.insert(tk.END, url, tag_url)
             last_end = match.end()
         
         if last_end < len(text):
@@ -887,13 +897,11 @@ class ChatClient:
         history_text.config(yscrollcommand=scrollbar.set)
         scrollbar.config(command=history_text.yview)
         
-        history_text.tag_config("my_name", foreground=self.get_color_for_nick(self.nickname), font=("Segoe UI", 10, "bold"))
+        for nick, color in self.nick_colors.items():
+            history_text.tag_config(f"nick_{nick}", foreground=color, font=("Segoe UI", 10, "bold"))
+        
         history_text.tag_config("server", foreground="#dcdcaa")
         history_text.tag_config("system", foreground="#c586c0")
-        
-        for nick in self.nick_colors:
-            if nick != self.nickname:
-                history_text.tag_config(f"nick_{nick}", foreground=self.nick_colors[nick], font=("Segoe UI", 10, "bold"))
         
         history_text.insert(tk.END, f"\n{'='*80}\n", "system")
         history_text.insert(tk.END, f"  📜 ПОЛНАЯ ИСТОРИЯ ОБЩЕГО ЧАТА\n", "system")
@@ -906,14 +914,11 @@ class ChatClient:
             msg_time = msg.get('time', '')
             edited = msg.get('edited', False)
             edit_mark = " (ред.)" if edited else ""
-            msg_id = msg.get('id', '')
             
             if sender == "СЕРВЕР":
                 history_text.insert(tk.END, f"[{msg_time}] 🔔 {text}{edit_mark}\n", "server")
             elif sender == "ФАЙЛ":
                 history_text.insert(tk.END, f"[{msg_time}] 📁 {text}{edit_mark}\n", "server")
-            elif sender == self.nickname:
-                history_text.insert(tk.END, f"[{msg_time}] 👤 {sender}: {text}{edit_mark}\n", "my_name")
             else:
                 tag = f"nick_{sender}" if f"nick_{sender}" in history_text.tag_names() else "system"
                 history_text.insert(tk.END, f"[{msg_time}] 👤 {sender}: {text}{edit_mark}\n", tag)
@@ -948,12 +953,6 @@ class ChatClient:
         elif sender == "ФАЙЛ":
             self.chat_area.insert(tk.END, f"[{msg_time}] ", "time")
             self.chat_area.insert(tk.END, f"📁 {text}{edit_mark}\n", "server")
-        elif sender == self.nickname:
-            self.chat_area.insert(tk.END, f"[{msg_time}] ", "time")
-            color = self.get_color_for_nick(self.nickname)
-            self.chat_area.tag_config("my_name", foreground=color)
-            self.chat_area.insert(tk.END, f"👤 {sender}: ", "my_name")
-            self.insert_message_with_links(f"{text}{edit_mark}", "my_name")
         else:
             self.chat_area.insert(tk.END, f"[{msg_time}] ", "time")
             color = self.get_color_for_nick(sender)
@@ -974,24 +973,21 @@ class ChatClient:
         
         self.chat_area.insert(tk.END, f"[{msg_time}] ", "time")
         
-        if sender == self.nickname:
-            color = self.get_color_for_nick(self.nickname)
-            self.chat_area.tag_config("my_name", foreground=color)
-            self.chat_area.insert(tk.END, f"Вы: ", "my_name")
-            self.insert_message_with_links(text, "my_name")
-        else:
-            color = self.get_color_for_nick(partner)
-            self.chat_area.tag_config(f"nick_{partner}", foreground=color, font=("Segoe UI", 10, "bold"))
-            self.chat_area.insert(tk.END, f"{partner}: ", f"nick_{partner}")
-            self.insert_message_with_links(text, f"nick_{partner}")
+        color = self.get_color_for_nick(sender)
+        self.chat_area.tag_config(f"nick_{sender}", foreground=color, font=("Segoe UI", 10, "bold"))
         
+        if sender == self.nickname:
+            self.chat_area.insert(tk.END, "Вы: ", f"nick_{sender}")
+        else:
+            self.chat_area.insert(tk.END, f"{sender}: ", f"nick_{sender}")
+        
+        self.insert_message_with_links(text, f"nick_{sender}")
         self.chat_area.see(tk.END)
     
     def add_system_message(self, text):
-        if self.current_chat == "general":
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            self.chat_area.insert(tk.END, f"[{timestamp}] ✨ {text}\n", "system")
-            self.chat_area.see(tk.END)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.chat_area.insert(tk.END, f"[{timestamp}] ✨ {text}\n", "system")
+        self.chat_area.see(tk.END)
     
     # ========== ОТПРАВКА СООБЩЕНИЙ ==========
     def send_message(self, event=None):
@@ -1008,20 +1004,7 @@ class ChatClient:
                 except Exception as e:
                     self.add_system_message(f"❌ Ошибка отправки: {e}")
             else:
-                # Личное сообщение
                 self.sock.send(f"CMD:PM|{self.current_chat}|{text}\n".encode('utf-8'))
-                
-                # Добавляем в локальную историю
-                if self.current_chat not in self.private_messages:
-                    self.private_messages[self.current_chat] = []
-                
-                msg = {
-                    'sender': self.nickname,
-                    'text': text,
-                    'time': datetime.now().strftime("%H:%M:%S")
-                }
-                self.private_messages[self.current_chat].append(msg)
-                self.display_private_message(msg, self.current_chat)
         
         self.message_entry.delete(0, tk.END)
     
@@ -1040,8 +1023,6 @@ class ChatClient:
         elif text == "/refresh":
             self.load_files_list()
             self.add_system_message("🔄 Список файлов обновлён")
-        elif text == "/online":
-            self.request_online_users()
     
     # ========== ПОЛУЧЕНИЕ СООБЩЕНИЙ ==========
     def receive_messages(self):
@@ -1056,7 +1037,7 @@ class ChatClient:
                 while '\n' in buffer:
                     line, buffer = buffer.split('\n', 1)
                     if line:
-                        self.process_server_line(line)
+                        self.root.after(0, lambda l=line: self.process_server_line(l))
                         
             except ConnectionResetError:
                 self.root.after(0, lambda: messagebox.showerror("Ошибка", "Соединение с сервером потеряно!"))
@@ -1084,11 +1065,18 @@ class ChatClient:
                     if self.current_chat == "general":
                         self.root.after(0, self.refresh_chat_display)
                         
+                elif msg_type == "private_history":
+                    target = msg.get("target")
+                    messages = msg.get("messages", [])
+                    self.private_messages[target] = messages
+                    if self.current_chat == target:
+                        self.root.after(0, self.refresh_chat_display)
+                        
                 elif msg_type == "message":
                     m = msg.get("data", {})
                     self.message_history.append(m)
                     if self.current_chat == "general":
-                        self.root.after(0, lambda: self.display_message(m))
+                        self.root.after(0, lambda msg=m: self.display_message(msg))
                         
                 elif msg_type == "file":
                     file_data = msg.get("data", {})
@@ -1109,10 +1097,29 @@ class ChatClient:
                     self.message_history.append(file_msg)
                     self.root.after(0, self.update_files_listbox)
                     if self.current_chat == "general":
-                        self.root.after(0, lambda: self.display_message(file_msg))
+                        self.root.after(0, lambda msg=file_msg: self.display_message(msg))
+                        
+                elif msg_type == "private_file":
+                    file_data = msg.get("data", {})
+                    target = msg.get("target", "")
+                    
+                    if target not in self.private_files:
+                        self.private_files[target] = []
+                    
+                    new_file = {
+                        'id': file_data.get('id', ''),
+                        'name': file_data.get('name', ''),
+                        'size': file_data.get('size', 0),
+                        'sender': file_data.get('sender', '')
+                    }
+                    self.private_files[target].append(new_file)
+                    
+                    if self.current_chat == target:
+                        self.root.after(0, self.update_files_listbox)
+                        self.root.after(0, lambda: self.add_system_message(f"📁 {file_data['sender']} отправил файл: {file_data['name']}"))
                         
                 elif msg_type == "notification":
-                    self.root.after(0, lambda: self.add_system_message(msg.get("text")))
+                    self.root.after(0, lambda text=msg.get("text"): self.add_system_message(text))
                     
                 elif msg_type == "private_message":
                     sender = msg["from"]
@@ -1121,6 +1128,7 @@ class ChatClient:
                     if sender not in self.private_chats_list:
                         self.private_chats_list.add(sender)
                         self.private_messages[sender] = []
+                        self.private_files[sender] = []
                         self.root.after(0, self.update_chats_list)
                     
                     if sender not in self.private_messages:
@@ -1134,9 +1142,9 @@ class ChatClient:
                     self.private_messages[sender].append(pm)
                     
                     if self.current_chat == sender:
-                        self.root.after(0, lambda: self.display_private_message(pm, sender))
+                        self.root.after(0, lambda msg=pm, s=sender: self.display_private_message(msg, s))
                     else:
-                        self.root.after(0, lambda: self.add_system_message(f"💬 Новое сообщение от {sender}"))
+                        self.root.after(0, lambda s=sender: self.add_system_message(f"💬 Новое сообщение от {s}"))
                         
                 elif msg_type == "private_sent":
                     target = msg["to"]
@@ -1145,9 +1153,21 @@ class ChatClient:
                     if target not in self.private_chats_list:
                         self.private_chats_list.add(target)
                         self.private_messages[target] = []
+                        self.private_files[target] = []
                         self.root.after(0, self.update_chats_list)
                     
-                    # Уже добавлено при отправке
+                    pm = {
+                        'sender': self.nickname,
+                        'text': text,
+                        'time': datetime.now().strftime("%H:%M:%S")
+                    }
+                    
+                    if target not in self.private_messages:
+                        self.private_messages[target] = []
+                    self.private_messages[target].append(pm)
+                    
+                    if self.current_chat == target:
+                        self.root.after(0, lambda msg=pm, t=target: self.display_private_message(msg, t))
                     
                 elif msg_type == "message_edited":
                     msg_id = msg["id"]
@@ -1184,22 +1204,19 @@ class ChatClient:
                     self.save_nick_colors()
                     self.root.after(0, self.refresh_chat_display)
                     
-                elif msg_type == "online_users":
-                    self.online_users = set(msg.get("users", []))
-                    
                 elif msg_type == "kicked":
                     self.root.after(0, lambda: messagebox.showerror("Кик", f"Вас отключили: {msg.get('reason')}"))
-                    self.root.after(0, self.on_close)
+                    self.root.after(100, self.on_close)
                     
                 elif msg_type == "banned":
                     self.root.after(0, lambda: messagebox.showerror("БАН", f"Вы забанены: {msg.get('reason')}"))
-                    self.root.after(0, self.on_close)
+                    self.root.after(100, self.on_close)
                     
             except json.JSONDecodeError:
                 pass
                 
         elif line.startswith("MSG:"):
-            self.root.after(0, lambda: self.add_system_message(line[4:]))
+            self.root.after(0, lambda text=line[4:]: self.add_system_message(text))
     
     def on_close(self):
         self.running = False

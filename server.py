@@ -8,16 +8,20 @@ import base64
 import time
 import struct
 import re
+import random
 
 # ========== АБСОЛЮТНЫЕ ПУТИ К ФАЙЛАМ ==========
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 USERS_FILE = os.path.join(BASE_DIR, "users.json")
 CHAT_HISTORY_FILE = os.path.join(BASE_DIR, "chat_history.json")
+PRIVATE_MESSAGES_FILE = os.path.join(BASE_DIR, "private_messages.json")
 BANNED_IPS_FILE = os.path.join(BASE_DIR, "banned_ips.json")
 RECEIVED_FILES_DIR = os.path.join(BASE_DIR, "received_files")
 # =============================================
 
 class ChatServer:
+    VERSION = "0.39.1"
+    
     def __init__(self, host='0.0.0.0', port=5555, file_port=5556):
         self.host = host
         self.port = port
@@ -25,6 +29,7 @@ class ChatServer:
         self.clients = []
         self.client_data = {}
         self.messages_history = []
+        self.private_messages = {}
         self.files_list = []
         self.message_counter = 0
         self.lock = threading.Lock()
@@ -32,6 +37,7 @@ class ChatServer:
         self.banned_ips = set()
         self.muted_users = {}
         self.running = True
+        self.recovery_codes = {}
         
         if not os.path.exists(RECEIVED_FILES_DIR):
             os.makedirs(RECEIVED_FILES_DIR)
@@ -45,7 +51,7 @@ class ChatServer:
         
         local_ip = self.get_local_ip()
         print("="*70)
-        print("🚀 СЕРВЕР ЧАТА ЗАПУЩЕН")
+        print(f"🚀 СЕРВЕР ЧАТА ЗАПУЩЕН (v{self.VERSION})")
         print(f"📂 Рабочая папка: {BASE_DIR}")
         print(f"📍 IP адрес сервера: {local_ip}")
         print(f"💬 Чат сервер: {self.port}")
@@ -63,6 +69,7 @@ class ChatServer:
         print("   /banned - показать забаненные IP")
         print("   /history - показать последние 10 сообщений")
         print("   /clearusers - очистить базу пользователей")
+        print("   /clearhistory - очистить историю чата")
         print("="*70)
         print("Ожидание подключений...\n")
         
@@ -77,6 +84,10 @@ class ChatServer:
             return ip
         except:
             return "127.0.0.1"
+    
+    def get_chat_id(self, user1, user2):
+        """Создаёт уникальный ID для чата между двумя пользователями"""
+        return "|".join(sorted([user1, user2]))
     
     def load_data(self):
         if os.path.exists(USERS_FILE):
@@ -98,10 +109,19 @@ class ChatServer:
                 print(f"✅ Загружено {len(self.files_list)} файлов")
             except Exception as e:
                 print(f"❌ Ошибка загрузки истории: {e}")
-                # Если файл повреждён, создаём новый
                 self.messages_history = []
                 self.files_list = []
                 self.message_counter = 0
+        
+        if os.path.exists(PRIVATE_MESSAGES_FILE):
+            try:
+                with open(PRIVATE_MESSAGES_FILE, 'r', encoding='utf-8') as f:
+                    self.private_messages = json.load(f)
+                total_pm = sum(len(msgs) for msgs in self.private_messages.values())
+                print(f"✅ Загружено {total_pm} личных сообщений")
+            except Exception as e:
+                print(f"❌ Ошибка загрузки личных сообщений: {e}")
+                self.private_messages = {}
                 
     def load_bans(self):
         if os.path.exists(BANNED_IPS_FILE):
@@ -128,7 +148,6 @@ class ChatServer:
     
     def save_history(self):
         try:
-            # Очищаем данные перед сохранением
             clean_files = []
             for f in self.files_list:
                 clean_files.append({
@@ -137,7 +156,8 @@ class ChatServer:
                     'path': str(f.get('path', '')),
                     'size': int(f.get('size', 0)),
                     'sender': str(f.get('sender', '')),
-                    'date': str(f.get('date', ''))
+                    'date': str(f.get('date', '')),
+                    'chat': str(f.get('chat', 'general'))
                 })
             
             clean_messages = []
@@ -156,13 +176,20 @@ class ChatServer:
                 'counter': int(self.message_counter)
             }
             
-            # Сохраняем с ensure_ascii=True для избежания проблем с кодировкой
             json_str = json.dumps(data, ensure_ascii=True, indent=2)
             
             with open(CHAT_HISTORY_FILE, 'w', encoding='utf-8') as f:
                 f.write(json_str)
         except Exception as e:
             print(f"❌ Ошибка сохранения истории: {e}")
+    
+    def save_private_messages(self):
+        try:
+            json_str = json.dumps(self.private_messages, ensure_ascii=True, indent=2)
+            with open(PRIVATE_MESSAGES_FILE, 'w', encoding='utf-8') as f:
+                f.write(json_str)
+        except Exception as e:
+            print(f"❌ Ошибка сохранения личных сообщений: {e}")
     
     def hash_password(self, password):
         return hashlib.sha256(password.encode()).hexdigest()[:32]
@@ -230,6 +257,7 @@ class ChatServer:
         for client, data in list(self.client_data.items()):
             if data['nickname'] == nickname:
                 self.send_to_client(client, "JSON_PAYLOAD:" + json.dumps({"type": "kicked", "reason": reason}, ensure_ascii=False))
+                time.sleep(0.1)
                 self.remove_client(client)
                 print(f"🛡️ Пользователь {nickname} кикнут. Причина: {reason}")
                 return True
@@ -243,6 +271,7 @@ class ChatServer:
                 self.banned_ips.add(ip)
                 self.save_bans()
                 self.send_to_client(client, "JSON_PAYLOAD:" + json.dumps({"type": "banned", "reason": reason}, ensure_ascii=False))
+                time.sleep(0.1)
                 self.remove_client(client)
                 print(f"🛡️ Пользователь {nickname} забанен (IP: {ip}). Причина: {reason}")
                 return True
@@ -331,7 +360,7 @@ class ChatServer:
         def handle_input():
             while self.running:
                 try:
-                    cmd = input()
+                    cmd = input().strip()
                     if not cmd:
                         continue
                     
@@ -393,8 +422,10 @@ class ChatServer:
                     elif command == "/clearhistory":
                         self.messages_history = []
                         self.files_list = []
+                        self.private_messages = {}
                         self.message_counter = 0
                         self.save_history()
+                        self.save_private_messages()
                         print("✅ История чата очищена")
                         
                     elif command == "/help":
@@ -409,8 +440,8 @@ class ChatServer:
                         print("   /users")
                         print("   /banned")
                         print("   /history [количество]")
-                        print("   /clearusers - очистить базу пользователей")
-                        print("   /clearhistory - очистить историю чата")
+                        print("   /clearusers")
+                        print("   /clearhistory")
                         print("   /stop - остановить сервер\n")
                         
                     elif command == "/stop":
@@ -419,7 +450,7 @@ class ChatServer:
                         break
                         
                     else:
-                        print(f"❌ Неизвестная команда: {command}. Введите /help для списка команд.")
+                        print(f"❌ Неизвестная команда: {command}")
                         
                 except EOFError:
                     break
@@ -444,7 +475,7 @@ class ChatServer:
                     if ip in self.banned_ips:
                         client.send("BANNED\n".encode('utf-8'))
                         client.close()
-                        print(f"🚫 Забаненный IP попытался подключиться: {ip}")
+                        print(f"🚫 Забаненный IP: {ip}")
                         continue
                         
                     print(f"[+] Новое подключение: {addr}")
@@ -495,8 +526,8 @@ class ChatServer:
                         history_payload = "JSON_PAYLOAD:" + json.dumps({
                             "type": "history",
                             "messages": self.messages_history[-100:],
-                            "files": self.files_list
-                        }, ensure_ascii=True)  # ВАЖНО: ensure_ascii=True
+                            "files": [f for f in self.files_list if f.get('chat', 'general') == 'general']
+                        }, ensure_ascii=True)
                         self.send_to_client(client, history_payload)
                         time.sleep(0.1)
                         
@@ -530,15 +561,15 @@ class ChatServer:
                         
                         history_payload = "JSON_PAYLOAD:" + json.dumps({
                             "type": "history",
-                            "messages": self.messages_history[-100:],
-                            "files": self.files_list
-                        }, ensure_ascii=True)  # ВАЖНО: ensure_ascii=True
+                            "messages": [],
+                            "files": []
+                        }, ensure_ascii=True)
                         self.send_to_client(client, history_payload)
                         time.sleep(0.1)
                         
                         client.settimeout(None)
                         self.broadcast("JSON_PAYLOAD:" + json.dumps({"type": "notification", "text": f"{nickname} присоединился к чату!"}, ensure_ascii=False), exclude_socket=client)
-                        print(f"   👤 {nickname} (@{username}) зарегистрировался и вошёл | Онлайн: {len(self.clients)}")
+                        print(f"   👤 {nickname} (@{username}) зарегистрировался | Онлайн: {len(self.clients)}")
                         
                         self.handle_chat(client, nickname)
                         return
@@ -554,7 +585,7 @@ class ChatServer:
                 print(f"   ⏰ Таймаут авторизации для {addr}")
                 break
             except Exception as e:
-                print(f"   ❌ Ошибка авторизации для {addr}: {e}")
+                print(f"   ❌ Ошибка авторизации: {e}")
                 break
         
         try:
@@ -577,6 +608,7 @@ class ChatServer:
                     if not line:
                         continue
                     
+                    # Проверка мута
                     if name in self.muted_users:
                         if datetime.now() < self.muted_users[name]:
                             self.send_to_client(client, "MSG:СЕРВЕР: 🔇 Вы в муте!")
@@ -584,6 +616,7 @@ class ChatServer:
                         else:
                             del self.muted_users[name]
                     
+                    # Обработка команд
                     if line.startswith("CMD:"):
                         parts = line[4:].split('|')
                         cmd = parts[0]
@@ -591,15 +624,44 @@ class ChatServer:
                         if cmd == "PM" and len(parts) >= 3:
                             target = parts[1]
                             msg = "|".join(parts[2:])
+                            
+                            # Сохраняем сообщение
+                            chat_id = self.get_chat_id(name, target)
+                            if chat_id not in self.private_messages:
+                                self.private_messages[chat_id] = []
+                            
+                            pm = {
+                                'sender': name,
+                                'text': msg,
+                                'time': datetime.now().strftime("%H:%M:%S")
+                            }
+                            self.private_messages[chat_id].append(pm)
+                            self.save_private_messages()
+                            
+                            # Отправляем получателю
                             target_socket = None
                             for s, data in self.client_data.items():
                                 if data['nickname'] == target:
                                     target_socket = s
                                     break
+                            
                             if target_socket:
                                 payload = json.dumps({"type": "private_message", "from": name, "text": msg}, ensure_ascii=False)
                                 self.send_to_client(target_socket, "JSON_PAYLOAD:" + payload)
-                                self.send_to_client(client, "JSON_PAYLOAD:" + json.dumps({"type": "private_sent", "to": target, "text": msg}, ensure_ascii=False))
+                            
+                            # Подтверждение отправителю
+                            self.send_to_client(client, "JSON_PAYLOAD:" + json.dumps({"type": "private_sent", "to": target, "text": msg}, ensure_ascii=False))
+                            print(f"   💬 ЛС от {name} для {target}")
+                            
+                        elif cmd == "GET_PM_HISTORY" and len(parts) >= 2:
+                            target = parts[1]
+                            chat_id = self.get_chat_id(name, target)
+                            history = self.private_messages.get(chat_id, [])
+                            self.send_to_client(client, "JSON_PAYLOAD:" + json.dumps({
+                                "type": "private_history",
+                                "target": target,
+                                "messages": history
+                            }, ensure_ascii=True))
                             
                         elif cmd == "EDIT" and len(parts) >= 3:
                             msg_id = parts[1]
@@ -611,6 +673,7 @@ class ChatServer:
                                     self.save_history()
                                     edit_msg = "JSON_PAYLOAD:" + json.dumps({"type": "message_edited", "id": msg_id, "text": new_text}, ensure_ascii=False)
                                     self.broadcast(edit_msg)
+                                    print(f"   ✏️ {name} отредактировал {msg_id}")
                                     break
                             
                         elif cmd == "COLOR" and len(parts) >= 2:
@@ -618,8 +681,23 @@ class ChatServer:
                             color_msg = "JSON_PAYLOAD:" + json.dumps({"type": "color_update", "nick": name, "color": color}, ensure_ascii=False)
                             self.broadcast(color_msg)
                             print(f"   🎨 {name} изменил цвет на {color}")
+                            
+                        elif cmd == "FORGOT" and len(parts) >= 2:
+                            username = parts[1]
+                            if username in self.users_db:
+                                code = str(random.randint(100000, 999999))
+                                self.recovery_codes[username] = code
+                                print("\n" + "="*50)
+                                print(f"🔐 ЗАПРОС ВОССТАНОВЛЕНИЯ")
+                                print(f"👤 Логин: {username}")
+                                print(f"🔑 Код: {code}")
+                                print("="*50 + "\n")
+                                self.send_to_client(client, f"RECOVERY_CODE:{code}")
+                            else:
+                                self.send_to_client(client, "USER_NOT_FOUND")
                         continue
                     
+                    # Обычное сообщение
                     self.message_counter += 1
                     msg_id = f"msg_{self.message_counter}"
                     message = {
@@ -637,7 +715,7 @@ class ChatServer:
                     print(f"📝 {name}: {line[:50]}...")
                     
             except Exception as e:
-                print(f"Ошибка в handle_chat для {name}: {e}")
+                print(f"Ошибка handle_chat для {name}: {e}")
                 break
         self.remove_client(client)
     
@@ -683,11 +761,26 @@ class ChatServer:
             
             cmd = cmd_byte.decode('utf-8', errors='ignore')
             
-            if cmd == 'L':  # LIST
-                files_json = json.dumps(self.files_list, ensure_ascii=True).encode('utf-8')  # ensure_ascii=True
+            if cmd == 'L':  # LIST GENERAL
+                general_files = [f for f in self.files_list if f.get('chat', 'general') == 'general']
+                files_json = json.dumps(general_files, ensure_ascii=True).encode('utf-8')
                 file_socket.send(struct.pack('>I', len(files_json)))
                 file_socket.send(files_json)
-                print(f"📋 Отправлен список из {len(self.files_list)} файлов")
+                print(f"📋 Список общих файлов: {len(general_files)}")
+                
+            elif cmd == 'P':  # LIST PRIVATE
+                nick_len_data = self.recv_exact(file_socket, 4)
+                if not nick_len_data:
+                    file_socket.close()
+                    return
+                nick_len = struct.unpack('>I', nick_len_data)[0]
+                nick = self.recv_exact(file_socket, nick_len).decode('utf-8')
+                
+                private_files = [f for f in self.files_list if f.get('chat') == nick]
+                files_json = json.dumps(private_files, ensure_ascii=True).encode('utf-8')
+                file_socket.send(struct.pack('>I', len(files_json)))
+                file_socket.send(files_json)
+                print(f"📋 Личные файлы для {nick}: {len(private_files)}")
                 
             elif cmd == 'D':  # DOWNLOAD
                 id_len_data = self.recv_exact(file_socket, 4)
@@ -695,7 +788,6 @@ class ChatServer:
                     file_socket.close()
                     return
                 id_len = struct.unpack('>I', id_len_data)[0]
-                
                 file_id = self.recv_exact(file_socket, id_len).decode('utf-8')
                 
                 found = False
@@ -720,13 +812,12 @@ class ChatServer:
                 if not found:
                     file_socket.send(b'E')
                     
-            elif cmd == 'U':  # UPLOAD
+            elif cmd == 'U':  # UPLOAD GENERAL
                 name_len_data = self.recv_exact(file_socket, 4)
                 if not name_len_data:
                     file_socket.close()
                     return
                 name_len = struct.unpack('>I', name_len_data)[0]
-                
                 filename = self.recv_exact(file_socket, name_len).decode('utf-8')
                 
                 size_data = self.recv_exact(file_socket, 8)
@@ -737,10 +828,9 @@ class ChatServer:
                     file_socket.close()
                     return
                 sender_len = struct.unpack('>I', sender_len_data)[0]
-                
                 sender = self.recv_exact(file_socket, sender_len).decode('utf-8')
                 
-                print(f"📥 Загрузка файла от {sender}: {filename} ({filesize/1024:.1f} KB)")
+                print(f"📥 Общий файл от {sender}: {filename} ({filesize/1024:.1f} KB)")
                 
                 file_socket.send(b'K')
                 
@@ -765,36 +855,104 @@ class ChatServer:
                     'path': save_path,
                     'size': filesize,
                     'sender': sender,
-                    'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'chat': 'general'
                 }
                 self.files_list.append(file_info)
                 self.save_history()
                 
                 print(f"✅ Файл сохранён: {save_path}")
                 
-                # Отправляем уведомление о новом файле
                 self.broadcast("JSON_PAYLOAD:" + json.dumps({
                     "type": "file",
-                    "data": {
-                        "sender": sender,
-                        "name": filename,
-                        "size": filesize,
-                        "id": file_id
-                    }
-                }, ensure_ascii=True))  # ensure_ascii=True
+                    "data": {"sender": sender, "name": filename, "size": filesize, "id": file_id}
+                }, ensure_ascii=True))
+                
+            elif cmd == 'V':  # UPLOAD PRIVATE
+                target_len_data = self.recv_exact(file_socket, 4)
+                if not target_len_data:
+                    file_socket.close()
+                    return
+                target_len = struct.unpack('>I', target_len_data)[0]
+                target = self.recv_exact(file_socket, target_len).decode('utf-8')
+                
+                name_len_data = self.recv_exact(file_socket, 4)
+                if not name_len_data:
+                    file_socket.close()
+                    return
+                name_len = struct.unpack('>I', name_len_data)[0]
+                filename = self.recv_exact(file_socket, name_len).decode('utf-8')
+                
+                size_data = self.recv_exact(file_socket, 8)
+                filesize = struct.unpack('>Q', size_data)[0]
+                
+                sender_len_data = self.recv_exact(file_socket, 4)
+                if not sender_len_data:
+                    file_socket.close()
+                    return
+                sender_len = struct.unpack('>I', sender_len_data)[0]
+                sender = self.recv_exact(file_socket, sender_len).decode('utf-8')
+                
+                print(f"📥 Личный файл от {sender} для {target}: {filename} ({filesize/1024:.1f} KB)")
+                
+                file_socket.send(b'K')
+                
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                safe_filename = re.sub(r'[^\w\-_\.]', '_', filename)
+                base, ext = os.path.splitext(safe_filename)
+                save_path = os.path.join(RECEIVED_FILES_DIR, f"{base}_{timestamp}{ext}")
+                
+                received = 0
+                with open(save_path, 'wb') as f:
+                    while received < filesize:
+                        data = file_socket.recv(min(8192, filesize - received))
+                        if not data:
+                            break
+                        f.write(data)
+                        received += len(data)
+                
+                file_id = hashlib.md5(f"{filename}{timestamp}{sender}{target}".encode()).hexdigest()[:8]
+                file_info = {
+                    'id': file_id,
+                    'name': filename,
+                    'path': save_path,
+                    'size': filesize,
+                    'sender': sender,
+                    'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'chat': target
+                }
+                self.files_list.append(file_info)
+                self.save_history()
+                
+                print(f"✅ Личный файл сохранён: {save_path}")
+                
+                target_socket = None
+                for s, data in self.client_data.items():
+                    if data['nickname'] == target:
+                        target_socket = s
+                        break
+                
+                payload = json.dumps({
+                    "type": "private_file",
+                    "target": target,
+                    "data": {"sender": sender, "name": filename, "size": filesize, "id": file_id}
+                }, ensure_ascii=True)
+                
+                if target_socket:
+                    self.send_to_client(target_socket, "JSON_PAYLOAD:" + payload)
+                self.send_to_client(client, "JSON_PAYLOAD:" + payload)
                 
             file_socket.close()
                 
         except Exception as e:
-            print(f"❌ Ошибка обработки файла от {addr}: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Ошибка файла от {addr}: {e}")
             try:
                 file_socket.close()
             except:
                 pass
 
 if __name__ == "__main__":
+    print(f"🚀 Запуск сервера v{ChatServer.VERSION}...")
     server = ChatServer()
     try:
         while server.running:
