@@ -1,6 +1,7 @@
 import socket
 import threading
 import os
+import sys
 from datetime import datetime, timedelta
 import hashlib
 import json
@@ -9,17 +10,19 @@ import time
 import struct
 import re
 import random
-#Скоро релиз :3
-# ========== АБСОЛЮТНЫЕ ПУТИ К ФАЙЛАМ ==========
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ========== ОПРЕДЕЛЕНИЕ ПУТИ ДЛЯ .EXE ==========
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
-# Создаём папку data, если её нет
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
     print(f"📁 Создана папка данных: {DATA_DIR}")
-    #Скоро релиз :3
-    #Ждёмс
+
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 CHAT_HISTORY_FILE = os.path.join(DATA_DIR, "chat_history.json")
 PRIVATE_MESSAGES_FILE = os.path.join(DATA_DIR, "private_messages.json")
@@ -28,7 +31,7 @@ RECEIVED_FILES_DIR = os.path.join(DATA_DIR, "received_files")
 # =============================================
 
 class ChatServer:
-    VERSION = "0.39.3"
+    VERSION = "1.0.0"
     
     def __init__(self, host='0.0.0.0', port=5555, file_port=5556):
         self.host = host
@@ -51,7 +54,6 @@ class ChatServer:
             os.makedirs(RECEIVED_FILES_DIR)
             print(f"📁 Создана папка файлов: {RECEIVED_FILES_DIR}")
         
-        # Вывод путей для диагностики
         print(f"📂 Путь к файлу пользователей: {USERS_FILE}")
         print(f"📂 Файл существует: {os.path.exists(USERS_FILE)}")
         
@@ -101,7 +103,6 @@ class ChatServer:
         return "|".join(sorted([user1, user2]))
     
     def load_data(self):
-        # Проверяем старый файл в корне
         old_users_file = os.path.join(BASE_DIR, "users.json")
         if os.path.exists(old_users_file) and not os.path.exists(USERS_FILE):
             print(f"📦 Найден старый файл users.json, перемещаю в папку data...")
@@ -117,7 +118,6 @@ class ChatServer:
                 with open(USERS_FILE, 'r', encoding='utf-8') as f:
                     self.users_db = json.load(f)
                 print(f"✅ Загружено {len(self.users_db)} пользователей")
-                # Вывод логинов для диагностики
                 if self.users_db:
                     print(f"   Логины: {', '.join(list(self.users_db.keys())[:5])}")
             except Exception as e:
@@ -254,8 +254,6 @@ class ChatServer:
         
         stored_hash = self.users_db[username]["password"]
         input_hash = self.hash_password(password)
-        print(f"   Хеш в базе: {stored_hash[:10]}...")
-        print(f"   Хеш ввода: {input_hash[:10]}...")
         
         if stored_hash != input_hash:
             print(f"   ❌ Пароль не совпадает")
@@ -719,6 +717,10 @@ class ChatServer:
                             color_msg = "JSON_PAYLOAD:" + json.dumps({"type": "color_update", "nick": name, "color": color}, ensure_ascii=False)
                             self.broadcast(color_msg)
                             print(f"   🎨 {name} изменил цвет на {color}")
+                            
+                        elif cmd == "ONLINE":
+                            online_users = [data['nickname'] for data in self.client_data.values()]
+                            self.send_to_client(client, "JSON_PAYLOAD:" + json.dumps({"type": "online_users", "users": online_users}, ensure_ascii=False))
                             
                         elif cmd == "FORGOT" and len(parts) >= 2:
                             username = parts[1]
