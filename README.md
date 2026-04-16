@@ -37,3 +37,7 @@ git pull
 ```
 
 ---
+
+**Автор**: StReLoK_45
+
+**Советник**: CrazyDrozd
