@@ -12,15 +12,22 @@ import random
 
 # ========== АБСОЛЮТНЫЕ ПУТИ К ФАЙЛАМ ==========
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-USERS_FILE = os.path.join(BASE_DIR, "users.json")
-CHAT_HISTORY_FILE = os.path.join(BASE_DIR, "chat_history.json")
-PRIVATE_MESSAGES_FILE = os.path.join(BASE_DIR, "private_messages.json")
-BANNED_IPS_FILE = os.path.join(BASE_DIR, "banned_ips.json")
-RECEIVED_FILES_DIR = os.path.join(BASE_DIR, "received_files")
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+# Создаём папку data, если её нет
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
+    print(f"📁 Создана папка данных: {DATA_DIR}")
+
+USERS_FILE = os.path.join(DATA_DIR, "users.json")
+CHAT_HISTORY_FILE = os.path.join(DATA_DIR, "chat_history.json")
+PRIVATE_MESSAGES_FILE = os.path.join(DATA_DIR, "private_messages.json")
+BANNED_IPS_FILE = os.path.join(DATA_DIR, "banned_ips.json")
+RECEIVED_FILES_DIR = os.path.join(DATA_DIR, "received_files")
 # =============================================
 
 class ChatServer:
-    VERSION = "0.39.1"
+    VERSION = "0.39.3"
     
     def __init__(self, host='0.0.0.0', port=5555, file_port=5556):
         self.host = host
@@ -41,7 +48,11 @@ class ChatServer:
         
         if not os.path.exists(RECEIVED_FILES_DIR):
             os.makedirs(RECEIVED_FILES_DIR)
-            print(f"📁 Создана папка: {RECEIVED_FILES_DIR}")
+            print(f"📁 Создана папка файлов: {RECEIVED_FILES_DIR}")
+        
+        # Вывод путей для диагностики
+        print(f"📂 Путь к файлу пользователей: {USERS_FILE}")
+        print(f"📂 Файл существует: {os.path.exists(USERS_FILE)}")
         
         self.load_data()
         self.load_bans()
@@ -52,7 +63,7 @@ class ChatServer:
         local_ip = self.get_local_ip()
         print("="*70)
         print(f"🚀 СЕРВЕР ЧАТА ЗАПУЩЕН (v{self.VERSION})")
-        print(f"📂 Рабочая папка: {BASE_DIR}")
+        print(f"📂 Папка данных: {DATA_DIR}")
         print(f"📍 IP адрес сервера: {local_ip}")
         print(f"💬 Чат сервер: {self.port}")
         print(f"📁 Файловый сервер: {self.file_port}")
@@ -86,17 +97,34 @@ class ChatServer:
             return "127.0.0.1"
     
     def get_chat_id(self, user1, user2):
-        """Создаёт уникальный ID для чата между двумя пользователями"""
         return "|".join(sorted([user1, user2]))
     
     def load_data(self):
+        # Проверяем старый файл в корне
+        old_users_file = os.path.join(BASE_DIR, "users.json")
+        if os.path.exists(old_users_file) and not os.path.exists(USERS_FILE):
+            print(f"📦 Найден старый файл users.json, перемещаю в папку data...")
+            try:
+                import shutil
+                shutil.move(old_users_file, USERS_FILE)
+                print(f"✅ Файл перемещён в {USERS_FILE}")
+            except Exception as e:
+                print(f"❌ Ошибка перемещения: {e}")
+        
         if os.path.exists(USERS_FILE):
             try:
                 with open(USERS_FILE, 'r', encoding='utf-8') as f:
                     self.users_db = json.load(f)
                 print(f"✅ Загружено {len(self.users_db)} пользователей")
+                # Вывод логинов для диагностики
+                if self.users_db:
+                    print(f"   Логины: {', '.join(list(self.users_db.keys())[:5])}")
             except Exception as e:
                 print(f"❌ Ошибка загрузки пользователей: {e}")
+        else:
+            print(f"⚠️ Файл пользователей не найден, создаю новый")
+            self.users_db = {}
+            self.save_users()
         
         if os.path.exists(CHAT_HISTORY_FILE):
             try:
@@ -143,6 +171,7 @@ class ChatServer:
         try:
             with open(USERS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.users_db, f, ensure_ascii=False, indent=2)
+            print(f"✅ Пользователи сохранены в {USERS_FILE}")
         except Exception as e:
             print(f"❌ Ошибка сохранения пользователей: {e}")
     
@@ -217,10 +246,21 @@ class ChatServer:
         return True, "✅ Регистрация успешна!"
     
     def login_user(self, username, password):
+        print(f"🔍 Попытка входа: {username}")
         if username not in self.users_db:
+            print(f"   ❌ Логин не найден в базе")
             return False, "❌ Пользователь с таким логином не найден!"
-        if self.users_db[username]["password"] != self.hash_password(password):
+        
+        stored_hash = self.users_db[username]["password"]
+        input_hash = self.hash_password(password)
+        print(f"   Хеш в базе: {stored_hash[:10]}...")
+        print(f"   Хеш ввода: {input_hash[:10]}...")
+        
+        if stored_hash != input_hash:
+            print(f"   ❌ Пароль не совпадает")
             return False, "❌ Неверный пароль!"
+        
+        print(f"   ✅ Вход успешен")
         return True, self.users_db[username]["nickname"]
     
     def broadcast(self, message, exclude_socket=None):
@@ -503,6 +543,8 @@ class ChatServer:
                 if not auth_data:
                     break
                 
+                print(f"🔑 Данные авторизации: {auth_data[:50]}...")
+                
                 parts = auth_data.split('|')
                 action = parts[0]
                 
@@ -608,7 +650,6 @@ class ChatServer:
                     if not line:
                         continue
                     
-                    # Проверка мута
                     if name in self.muted_users:
                         if datetime.now() < self.muted_users[name]:
                             self.send_to_client(client, "MSG:СЕРВЕР: 🔇 Вы в муте!")
@@ -616,7 +657,6 @@ class ChatServer:
                         else:
                             del self.muted_users[name]
                     
-                    # Обработка команд
                     if line.startswith("CMD:"):
                         parts = line[4:].split('|')
                         cmd = parts[0]
@@ -625,7 +665,6 @@ class ChatServer:
                             target = parts[1]
                             msg = "|".join(parts[2:])
                             
-                            # Сохраняем сообщение
                             chat_id = self.get_chat_id(name, target)
                             if chat_id not in self.private_messages:
                                 self.private_messages[chat_id] = []
@@ -638,7 +677,6 @@ class ChatServer:
                             self.private_messages[chat_id].append(pm)
                             self.save_private_messages()
                             
-                            # Отправляем получателю
                             target_socket = None
                             for s, data in self.client_data.items():
                                 if data['nickname'] == target:
@@ -649,7 +687,6 @@ class ChatServer:
                                 payload = json.dumps({"type": "private_message", "from": name, "text": msg}, ensure_ascii=False)
                                 self.send_to_client(target_socket, "JSON_PAYLOAD:" + payload)
                             
-                            # Подтверждение отправителю
                             self.send_to_client(client, "JSON_PAYLOAD:" + json.dumps({"type": "private_sent", "to": target, "text": msg}, ensure_ascii=False))
                             print(f"   💬 ЛС от {name} для {target}")
                             
@@ -697,7 +734,6 @@ class ChatServer:
                                 self.send_to_client(client, "USER_NOT_FOUND")
                         continue
                     
-                    # Обычное сообщение
                     self.message_counter += 1
                     msg_id = f"msg_{self.message_counter}"
                     message = {
@@ -761,14 +797,14 @@ class ChatServer:
             
             cmd = cmd_byte.decode('utf-8', errors='ignore')
             
-            if cmd == 'L':  # LIST GENERAL
+            if cmd == 'L':
                 general_files = [f for f in self.files_list if f.get('chat', 'general') == 'general']
                 files_json = json.dumps(general_files, ensure_ascii=True).encode('utf-8')
                 file_socket.send(struct.pack('>I', len(files_json)))
                 file_socket.send(files_json)
                 print(f"📋 Список общих файлов: {len(general_files)}")
                 
-            elif cmd == 'P':  # LIST PRIVATE
+            elif cmd == 'P':
                 nick_len_data = self.recv_exact(file_socket, 4)
                 if not nick_len_data:
                     file_socket.close()
@@ -782,7 +818,7 @@ class ChatServer:
                 file_socket.send(files_json)
                 print(f"📋 Личные файлы для {nick}: {len(private_files)}")
                 
-            elif cmd == 'D':  # DOWNLOAD
+            elif cmd == 'D':
                 id_len_data = self.recv_exact(file_socket, 4)
                 if not id_len_data:
                     file_socket.close()
@@ -812,7 +848,7 @@ class ChatServer:
                 if not found:
                     file_socket.send(b'E')
                     
-            elif cmd == 'U':  # UPLOAD GENERAL
+            elif cmd == 'U':
                 name_len_data = self.recv_exact(file_socket, 4)
                 if not name_len_data:
                     file_socket.close()
@@ -868,7 +904,7 @@ class ChatServer:
                     "data": {"sender": sender, "name": filename, "size": filesize, "id": file_id}
                 }, ensure_ascii=True))
                 
-            elif cmd == 'V':  # UPLOAD PRIVATE
+            elif cmd == 'V':
                 target_len_data = self.recv_exact(file_socket, 4)
                 if not target_len_data:
                     file_socket.close()
