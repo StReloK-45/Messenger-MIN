@@ -999,3 +999,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n👋 Сервер остановлен")
         server.running = False
+#:3
