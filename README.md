@@ -50,5 +50,9 @@ python client.py # для пользователей
 ---
 
 **Автор**: [StReLoK_45](https://github.com/StReloK-45)
+> * Основная работа над серверной и клиентской частями в коде.
+> * Ведение update-log.md и релизов проекта
 
 **Советник**: [CrazyDrozd](https://github.com/CrazyDrozd)
+> * Ведение GitHub репозитория.
+> * Основная работа над README.md и лицензией.
