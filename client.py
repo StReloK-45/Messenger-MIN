@@ -13,7 +13,7 @@ import hashlib
 import struct
 
 class ChatClient:
-    VERSION = "0.43.4"
+    VERSION = "0.43.6"
     
     def __init__(self):
         self.sock = None
@@ -37,9 +37,7 @@ class ChatClient:
         self.auth_window = None
         self.auth_success = False
         self.current_chat = "general"
-        self.online_users = set()
         self.private_chats_list = set()
-        self.processing_lock = threading.Lock()
         
         print("=" * 50)
         print(f"🚀 ЗАПУСК КЛИЕНТА ЧАТА v{self.VERSION}")
@@ -47,6 +45,7 @@ class ChatClient:
         
         self.load_nick_colors()
         self.load_config()
+        self.load_chats_list()
         self.ask_server_ip()
         
         if not self.connect_to_server():
@@ -65,6 +64,45 @@ class ChatClient:
         self.message_entry.focus()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.mainloop()
+    
+    # ========== СОХРАНЕНИЕ ЧАТОВ ==========
+    def load_chats_list(self):
+        chats_file = "private_chats.json"
+        if os.path.exists(chats_file):
+            try:
+                with open(chats_file, 'r', encoding='utf-8') as f:
+                    self.private_chats_list = set(json.load(f))
+                print(f"✅ Загружено {len(self.private_chats_list)} личных чатов")
+            except:
+                pass
+    
+    def save_chats_list(self):
+        chats_file = "private_chats.json"
+        try:
+            with open(chats_file, 'w', encoding='utf-8') as f:
+                json.dump(list(self.private_chats_list), f, ensure_ascii=False, indent=2)
+        except:
+            pass
+    
+    def load_private_messages(self, nick):
+        pm_file = f"pm_{self.nickname}_{nick}.json"
+        if os.path.exists(pm_file):
+            try:
+                with open(pm_file, 'r', encoding='utf-8') as f:
+                    self.private_messages[nick] = json.load(f)
+            except:
+                self.private_messages[nick] = []
+        else:
+            self.private_messages[nick] = []
+    
+    def save_private_messages(self, nick):
+        if nick in self.private_messages:
+            pm_file = f"pm_{self.nickname}_{nick}.json"
+            try:
+                with open(pm_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.private_messages[nick], f, ensure_ascii=False, indent=2)
+            except:
+                pass
     
     # ========== ЦВЕТА НИКОВ ==========
     def load_nick_colors(self):
@@ -708,7 +746,11 @@ class ChatClient:
                                        fg=self.colors['text'], relief=tk.FLAT, insertbackground=self.colors['text'])
         self.message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         self.message_entry.bind("<Return>", self.send_message)
-        self.message_entry.bind("<Control-v>", lambda e: self.paste_text())
+        
+        # Правильная привязка вставки
+        self.message_entry.bind("<Control-v>", self.paste_text)
+        self.message_entry.bind("<Control-V>", self.paste_text)
+        self.message_entry.bind("<<Paste>>", self.paste_text)
         
         button_frame = tk.Frame(center_panel, bg=self.colors['bg'])
         button_frame.pack(fill=tk.X, pady=(5, 0))
@@ -748,17 +790,61 @@ class ChatClient:
         self.chat_context_menu.add_command(label="💬 Личное сообщение", command=self.start_private_chat)
         self.chat_area.bind("<Button-3>", self.show_chat_context_menu)
         
+        # Контекстное меню для поля ввода
+        self.entry_context_menu = tk.Menu(self.root, tearoff=0, bg='#3c3c3c', fg='white', activebackground='#0e639c')
+        self.entry_context_menu.add_command(label="📋 Вставить", command=self.paste_text)
+        self.entry_context_menu.add_command(label="📋 Копировать", command=self.copy_from_entry)
+        self.entry_context_menu.add_command(label="✂️ Вырезать", command=self.cut_from_entry)
+        self.message_entry.bind("<Button-3>", self.show_entry_context_menu)
+        
         self.update_chats_list()
+    
+    def show_entry_context_menu(self, event):
+        try:
+            self.entry_context_menu.post(event.x_root, event.y_root)
+        except:
+            pass
+    
+    def copy_from_entry(self):
+        try:
+            selected = self.message_entry.selection_get()
+            if selected:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(selected)
+        except:
+            # Если нет выделения, копируем всё
+            text = self.message_entry.get()
+            if text:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(text)
+    
+    def cut_from_entry(self):
+        try:
+            selected = self.message_entry.selection_get()
+            if selected:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(selected)
+                self.message_entry.delete(tk.SEL_FIRST, tk.SEL_LAST)
+        except:
+            pass
     
     def update_chats_list(self):
         self.chats_listbox.delete(0, tk.END)
         self.chats_listbox.insert(tk.END, "💬 ОБЩИЙ ЧАТ")
-        self.chats_listbox.itemconfig(0, {'bg': '#264f78', 'fg': 'white'})
         
+        if self.current_chat == "general":
+            self.chats_listbox.itemconfig(0, {'bg': '#264f78', 'fg': 'white'})
+        else:
+            self.chats_listbox.itemconfig(0, {'bg': self.colors['chat_bg'], 'fg': 'white'})
+        
+        idx = 1
         for nick in sorted(self.private_chats_list):
             if nick != self.nickname:
                 display = f"👤 {nick}"
                 self.chats_listbox.insert(tk.END, display)
+                if self.current_chat == nick:
+                    self.chats_listbox.itemconfig(idx, {'bg': '#264f78', 'fg': 'white'})
+                idx += 1
     
     def on_chat_select(self, event):
         selection = self.chats_listbox.curselection()
@@ -773,8 +859,11 @@ class ChatClient:
             nick = self.chats_listbox.get(idx).replace("👤 ", "")
             self.current_chat = nick
             self.chat_header.config(text=f"💬 ЛИЧНЫЕ СООБЩЕНИЯ С {nick}")
+            if nick not in self.private_messages:
+                self.load_private_messages(nick)
             self.sock.send(f"CMD:GET_PM_HISTORY|{nick}\n".encode('utf-8'))
         
+        self.update_chats_list()
         self.refresh_chat_display()
         self.load_files_list()
     
@@ -791,6 +880,7 @@ class ChatClient:
         if target and target != self.nickname:
             if target not in self.private_chats_list:
                 self.private_chats_list.add(target)
+                self.save_chats_list()
                 self.private_messages[target] = []
                 self.private_files[target] = []
                 self.update_chats_list()
@@ -838,14 +928,18 @@ class ChatClient:
         except:
             pass
     
-    def paste_text(self):
+    def paste_text(self, event=None):
+        """Вставка текста из буфера обмена"""
         try:
             clipboard_text = self.root.clipboard_get()
             if clipboard_text:
+                # Удаляем возможные переводы строк в конце
+                clipboard_text = clipboard_text.rstrip('\n\r')
                 cursor_pos = self.message_entry.index(tk.INSERT)
                 self.message_entry.insert(cursor_pos, clipboard_text)
         except:
             pass
+        return "break"  # Предотвращаем двойную вставку
     
     def open_link(self, event):
         index = self.chat_area.index(f"@{event.x},{event.y}")
@@ -884,7 +978,7 @@ class ChatClient:
     
     def show_full_history(self):
         history_window = Toplevel(self.root)
-        history_window.title("📜 Полная история чата")
+        history_window.title("📜 Полная история общего чата")
         history_window.geometry("800x600")
         history_window.configure(bg='#1e1e1e')
         
@@ -1069,6 +1163,7 @@ class ChatClient:
                     target = msg.get("target")
                     messages = msg.get("messages", [])
                     self.private_messages[target] = messages
+                    self.save_private_messages(target)
                     if self.current_chat == target:
                         self.root.after(0, self.refresh_chat_display)
                         
@@ -1114,6 +1209,11 @@ class ChatClient:
                     }
                     self.private_files[target].append(new_file)
                     
+                    if target not in self.private_chats_list:
+                        self.private_chats_list.add(target)
+                        self.save_chats_list()
+                        self.root.after(0, self.update_chats_list)
+                    
                     if self.current_chat == target:
                         self.root.after(0, self.update_files_listbox)
                         self.root.after(0, lambda: self.add_system_message(f"📁 {file_data['sender']} отправил файл: {file_data['name']}"))
@@ -1127,19 +1227,21 @@ class ChatClient:
                     
                     if sender not in self.private_chats_list:
                         self.private_chats_list.add(sender)
+                        self.save_chats_list()
                         self.private_messages[sender] = []
                         self.private_files[sender] = []
                         self.root.after(0, self.update_chats_list)
-                    
-                    if sender not in self.private_messages:
-                        self.private_messages[sender] = []
                     
                     pm = {
                         'sender': sender,
                         'text': text,
                         'time': datetime.now().strftime("%H:%M:%S")
                     }
+                    
+                    if sender not in self.private_messages:
+                        self.private_messages[sender] = []
                     self.private_messages[sender].append(pm)
+                    self.save_private_messages(sender)
                     
                     if self.current_chat == sender:
                         self.root.after(0, lambda msg=pm, s=sender: self.display_private_message(msg, s))
@@ -1152,6 +1254,7 @@ class ChatClient:
                     
                     if target not in self.private_chats_list:
                         self.private_chats_list.add(target)
+                        self.save_chats_list()
                         self.private_messages[target] = []
                         self.private_files[target] = []
                         self.root.after(0, self.update_chats_list)
@@ -1165,6 +1268,7 @@ class ChatClient:
                     if target not in self.private_messages:
                         self.private_messages[target] = []
                     self.private_messages[target].append(pm)
+                    self.save_private_messages(target)
                     
                     if self.current_chat == target:
                         self.root.after(0, lambda msg=pm, t=target: self.display_private_message(msg, t))
@@ -1221,6 +1325,9 @@ class ChatClient:
     def on_close(self):
         self.running = False
         self.save_nick_colors()
+        self.save_chats_list()
+        for nick in self.private_messages:
+            self.save_private_messages(nick)
         try:
             if self.sock:
                 self.sock.close()
