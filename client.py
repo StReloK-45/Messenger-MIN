@@ -15,6 +15,7 @@ import struct
 class ChatClient:
     VERSION = "0.43.6"
     #Скоро релиз :3
+    #Ждёмс
     def __init__(self):
         self.sock = None
         self.nickname = None

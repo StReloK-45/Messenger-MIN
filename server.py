@@ -19,6 +19,7 @@ if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
     print(f"📁 Создана папка данных: {DATA_DIR}")
     #Скоро релиз :3
+    #Ждёмс
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 CHAT_HISTORY_FILE = os.path.join(DATA_DIR, "chat_history.json")
 PRIVATE_MESSAGES_FILE = os.path.join(DATA_DIR, "private_messages.json")
