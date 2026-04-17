@@ -852,10 +852,15 @@ class ChatServer:
                     
                     if name in self.muted_users:
                         if datetime.now() < self.muted_users[name]:
-                            self.send_to_client(client, "MSG:СЕРВЕР: 🔇 Вы в муте!")
+                            # Проверяем, не отправляли ли уже уведомление
+                            if not hasattr(client, '_mute_notified'):
+                                self.send_to_client(client, "MSG:СЕРВЕР: 🔇 Вы в муте!")
+                                client._mute_notified = True
                             continue
                         else:
                             del self.muted_users[name]
+                            if hasattr(client, '_mute_notified'):
+                                delattr(client, '_mute_notified')
                             self.root.after(0, self.update_online_display)
                     
                     if line.startswith("CMD:"):
