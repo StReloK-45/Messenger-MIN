@@ -21,7 +21,7 @@ else:
 # =============================================
 
 class ChatClient:
-    VERSION = "1.1.1"
+    VERSION = "1.1.2"
     
     # ========== СЛОВАРЬ СМАЙЛИКОВ ==========
     EMOJI_MAP = {
@@ -183,7 +183,7 @@ class ChatClient:
         
         self.emoji_window = Toplevel(self.root)
         self.emoji_window.title("😊 Смайлики")
-        self.emoji_window.geometry("400x350")
+        self.emoji_window.geometry("400x380")
         self.emoji_window.configure(bg='#1e1e1e')
         self.emoji_window.transient(self.root)
         
