@@ -35,7 +35,7 @@ RECEIVED_FILES_DIR = os.path.join(DATA_DIR, "received_files")
 # =============================================
 
 class ChatServer:
-    VERSION = "1.1.1"
+    VERSION = "1.1.2"
     
     def __init__(self, host='0.0.0.0', port=5555, file_port=5556):
         self.host = host
