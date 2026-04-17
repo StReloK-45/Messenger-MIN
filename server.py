@@ -20,10 +20,12 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# ВСЕ JSON-ФАЙЛЫ В ПАПКЕ data
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
+    print(f"📁 Создана папка данных: {DATA_DIR}")
 
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 CHAT_HISTORY_FILE = os.path.join(DATA_DIR, "chat_history.json")
@@ -33,7 +35,7 @@ RECEIVED_FILES_DIR = os.path.join(DATA_DIR, "received_files")
 # =============================================
 
 class ChatServer:
-    VERSION = "1.1.0"
+    VERSION = "1.1.1"
     
     def __init__(self, host='0.0.0.0', port=5555, file_port=5556):
         self.host = host
@@ -60,11 +62,12 @@ class ChatServer:
         
         if not os.path.exists(RECEIVED_FILES_DIR):
             os.makedirs(RECEIVED_FILES_DIR)
+            print(f"📁 Создана папка файлов: {RECEIVED_FILES_DIR}")
         
-        # === СНАЧАЛА СОЗДАЁМ GUI ===
+        # Сначала создаём GUI
         self.setup_gui()
         
-        # === ПОТОМ ЗАГРУЖАЕМ ДАННЫЕ (лог уже работает) ===
+        # Потом загружаем данные
         self.load_data()
         self.load_bans()
         
@@ -351,7 +354,6 @@ class ChatServer:
         now = time.time()
         self.message_timestamps[nickname].append(now)
         
-        # Оставляем только сообщения за последние spam_interval секунд
         cutoff = now - self.spam_interval
         self.message_timestamps[nickname] = [t for t in self.message_timestamps[nickname] if t > cutoff]
         
@@ -359,7 +361,6 @@ class ChatServer:
             self.mute_user(nickname, self.spam_mute_minutes)
             self.message_timestamps[nickname] = []
             
-            # Отправляем сообщение нарушителю
             for client, data in self.client_data.items():
                 if data['nickname'] == nickname:
                     self.send_to_client(client, "MSG:СЕРВЕР: 🔇 Вы замучены на 15 минут за спам!")
@@ -384,6 +385,7 @@ class ChatServer:
         return "|".join(sorted([user1, user2]))
     
     def load_data(self):
+        # Проверяем и перемещаем старые файлы из корня в data
         old_users_file = os.path.join(BASE_DIR, "users.json")
         if os.path.exists(old_users_file) and not os.path.exists(USERS_FILE):
             try:
@@ -393,16 +395,35 @@ class ChatServer:
             except:
                 pass
         
+        old_history_file = os.path.join(BASE_DIR, "chat_history.json")
+        if os.path.exists(old_history_file) and not os.path.exists(CHAT_HISTORY_FILE):
+            try:
+                import shutil
+                shutil.move(old_history_file, CHAT_HISTORY_FILE)
+                self.log(f"📦 Старый chat_history.json перемещён в data/", "system")
+            except:
+                pass
+        
+        old_pm_file = os.path.join(BASE_DIR, "private_messages.json")
+        if os.path.exists(old_pm_file) and not os.path.exists(PRIVATE_MESSAGES_FILE):
+            try:
+                import shutil
+                shutil.move(old_pm_file, PRIVATE_MESSAGES_FILE)
+                self.log(f"📦 Старый private_messages.json перемещён в data/", "system")
+            except:
+                pass
+        
         if os.path.exists(USERS_FILE):
             try:
                 with open(USERS_FILE, 'r', encoding='utf-8') as f:
                     self.users_db = json.load(f)
-                self.log(f"✅ Загружено {len(self.users_db)} пользователей", "system")
+                self.log(f"✅ Загружено {len(self.users_db)} пользователей из data/", "system")
             except Exception as e:
                 self.log(f"❌ Ошибка загрузки пользователей: {e}", "error")
         else:
             self.users_db = {}
             self.save_users()
+            self.log(f"📁 Создан новый файл пользователей в data/", "system")
         
         if os.path.exists(CHAT_HISTORY_FILE):
             try:
@@ -411,8 +432,8 @@ class ChatServer:
                     self.messages_history = data.get('messages', [])
                     self.files_list = data.get('files', [])
                     self.message_counter = data.get('counter', 0)
-                self.log(f"✅ Загружено {len(self.messages_history)} сообщений", "system")
-                self.log(f"✅ Загружено {len(self.files_list)} файлов", "system")
+                self.log(f"✅ Загружено {len(self.messages_history)} сообщений из data/", "system")
+                self.log(f"✅ Загружено {len(self.files_list)} файлов из data/", "system")
             except Exception as e:
                 self.log(f"❌ Ошибка загрузки истории: {e}", "error")
                 self.messages_history = []
@@ -424,17 +445,25 @@ class ChatServer:
                 with open(PRIVATE_MESSAGES_FILE, 'r', encoding='utf-8') as f:
                     self.private_messages = json.load(f)
                 total_pm = sum(len(msgs) for msgs in self.private_messages.values())
-                self.log(f"✅ Загружено {total_pm} личных сообщений", "system")
+                self.log(f"✅ Загружено {total_pm} личных сообщений из data/", "system")
             except Exception as e:
                 self.log(f"❌ Ошибка загрузки личных сообщений: {e}", "error")
                 self.private_messages = {}
                 
     def load_bans(self):
+        old_bans_file = os.path.join(BASE_DIR, "banned_ips.json")
+        if os.path.exists(old_bans_file) and not os.path.exists(BANNED_IPS_FILE):
+            try:
+                import shutil
+                shutil.move(old_bans_file, BANNED_IPS_FILE)
+            except:
+                pass
+        
         if os.path.exists(BANNED_IPS_FILE):
             try:
                 with open(BANNED_IPS_FILE, 'r') as f:
                     self.banned_ips = set(json.load(f))
-                self.log(f"✅ Загружено {len(self.banned_ips)} забаненных IP", "system")
+                self.log(f"✅ Загружено {len(self.banned_ips)} забаненных IP из data/", "system")
             except Exception as e:
                 self.log(f"❌ Ошибка загрузки банов: {e}", "error")
 
@@ -1205,11 +1234,4 @@ class ChatServer:
         self.root.destroy()
 
 if __name__ == "__main__":
-    print(f"🚀 Запуск сервера v{ChatServer.VERSION}...")
     server = ChatServer()
-    try:
-        while server.running:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\n👋 Сервер остановлен")
-        server.running = False
