@@ -215,6 +215,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Messenger-MIN configuration files
 chat_history.json
 users.json
 nick_colors.json
@@ -225,3 +226,5 @@ banned_ips.json
 chat_config.ini
 received_files/
 data/
+
+*.exe
