@@ -21,7 +21,63 @@ else:
 # =============================================
 
 class ChatClient:
-    VERSION = "1.0.0"
+    VERSION = "1.1.0"
+    
+    # ========== СЛОВАРЬ СМАЙЛИКОВ ==========
+    EMOJI_MAP = {
+        "😊": ":)",
+        "😞": ":(",
+        "😃": ":D",
+        "😉": ";)",
+        "❤️": "<3",
+        "😛": ":P",
+        "😮": ":O",
+        "😐": ":|",
+        "😢": ":'(",
+        "😠": ">:(",
+        "😘": ":*",
+        "😺": ":3",
+        "😕": ":/",
+        "😆": "XD",
+        "😬": ":S",
+        "😎": "B)",
+        "😂": ":')",
+        "😑": "-_-",
+        "🤔": "o.O",
+        "🐧": "<('_')>",
+        "🎉": "\\o/",
+        "👍": "(y)",
+        "👎": "(n)",
+        "🥰": ":love:",
+        "🤣": ":rofl:",
+        "😭": ":cry:",
+        "🤯": ":mindblown:",
+        "🫡": ":salute:",
+        "🫶": ":hearthands:",
+        "🥺": ":puppy:",
+        "💀": ":skull:",
+        "👀": ":eyes:",
+        "🔥": ":fire:",
+        "💯": ":100:",
+        "✅": ":check:",
+        "❌": ":x:",
+        "⭐": ":star:",
+        "☕": ":coffee:",
+        "🍕": ":pizza:",
+        "🎮": ":game:",
+        "💻": ":laptop:",
+        "📱": ":phone:",
+        "💡": ":idea:",
+        "🚀": ":rocket:",
+        "🐍": ":python:",
+        "🦊": ":fox:",
+        "🐧": ":linux:",
+        "🪟": ":windows:"
+    }
+    
+    # Обратный словарь для отображения
+    EMOJI_LIST = list(EMOJI_MAP.keys())
+    # ========================================
     
     def __init__(self):
         self.sock = None
@@ -48,6 +104,7 @@ class ChatClient:
         self.private_chats_list = set()
         self.online_users = set()
         self.logo_image = None
+        self.emoji_window = None
         
         print("=" * 50)
         print(f"🚀 ЗАПУСК КЛИЕНТА ЧАТА v{self.VERSION}")
@@ -76,6 +133,161 @@ class ChatClient:
         self.message_entry.focus()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.mainloop()
+    
+    def replace_emojis(self, text):
+        """Заменяет текстовые коды на смайлики (для отображения)"""
+        if not text:
+            return text
+        
+        # Сначала заменяем длинные коды
+        text = text.replace(":love:", "🥰")
+        text = text.replace(":rofl:", "🤣")
+        text = text.replace(":cry:", "😭")
+        text = text.replace(":mindblown:", "🤯")
+        text = text.replace(":salute:", "🫡")
+        text = text.replace(":hearthands:", "🫶")
+        text = text.replace(":puppy:", "🥺")
+        text = text.replace(":skull:", "💀")
+        text = text.replace(":eyes:", "👀")
+        text = text.replace(":fire:", "🔥")
+        text = text.replace(":100:", "💯")
+        text = text.replace(":check:", "✅")
+        text = text.replace(":x:", "❌")
+        text = text.replace(":star:", "⭐")
+        text = text.replace(":coffee:", "☕")
+        text = text.replace(":pizza:", "🍕")
+        text = text.replace(":game:", "🎮")
+        text = text.replace(":laptop:", "💻")
+        text = text.replace(":phone:", "📱")
+        text = text.replace(":idea:", "💡")
+        text = text.replace(":rocket:", "🚀")
+        text = text.replace(":python:", "🐍")
+        text = text.replace(":fox:", "🦊")
+        text = text.replace(":linux:", "🐧")
+        text = text.replace(":windows:", "🪟")
+        
+        # Затем короткие
+        sorted_codes = sorted(self.EMOJI_MAP.keys(), key=len, reverse=True)
+        for emoji in sorted_codes:
+            code = self.EMOJI_MAP[emoji]
+            text = text.replace(code, emoji)
+        
+        return text
+    
+    def show_emoji_panel(self):
+        """Показывает панель выбора смайликов"""
+        if self.emoji_window and self.emoji_window.winfo_exists():
+            self.emoji_window.lift()
+            self.emoji_window.focus()
+            return
+        
+        self.emoji_window = Toplevel(self.root)
+        self.emoji_window.title("😊 Смайлики")
+        self.emoji_window.geometry("400x350")
+        self.emoji_window.configure(bg='#1e1e1e')
+        self.emoji_window.transient(self.root)
+        
+        # Позиционируем под кнопкой
+        x = self.root.winfo_x() + 100
+        y = self.root.winfo_y() + self.root.winfo_height() - 450
+        self.emoji_window.geometry(f"+{x}+{y}")
+        
+        self.emoji_window.protocol("WM_DELETE_WINDOW", self.on_emoji_close)
+        
+        # Заголовок
+        tk.Label(self.emoji_window, text="Выберите смайлик (или введите код)", 
+                 bg='#1e1e1e', fg='#4ec9b0', font=("Segoe UI", 11, "bold")).pack(pady=10)
+        
+        # Поле быстрого поиска
+        search_frame = tk.Frame(self.emoji_window, bg='#1e1e1e')
+        search_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        tk.Label(search_frame, text="Код:", bg='#1e1e1e', fg='white', font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
+        code_entry = tk.Entry(search_frame, bg='#3c3c3c', fg='white', font=("Segoe UI", 10), width=15)
+        code_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        def insert_code():
+            code = code_entry.get().strip()
+            if code:
+                self.insert_emoji(code)
+                self.emoji_window.destroy()
+        
+        code_entry.bind("<Return>", lambda e: insert_code())
+        tk.Button(search_frame, text="Вставить", command=insert_code,
+                  bg='#0e639c', fg='white', font=("Segoe UI", 9),
+                  relief=tk.FLAT, cursor="hand2").pack(side=tk.RIGHT, padx=(5, 0))
+        
+        # Примеры кодов
+        tk.Label(self.emoji_window, text="Коды: :) :D <3 :love: :fire: :rocket: :100:",
+                 bg='#1e1e1e', fg='#6a9955', font=("Segoe UI", 8)).pack(pady=(0, 10))
+        
+        # Панель со смайликами
+        emoji_frame = tk.Frame(self.emoji_window, bg='#1e1e1e')
+        emoji_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Создаём сетку смайликов
+        row, col = 0, 0
+        max_cols = 8
+        
+        for emoji in self.EMOJI_LIST[:40]:  # Показываем первые 40 смайликов
+            code = self.EMOJI_MAP.get(emoji, "")
+            
+            btn = tk.Button(emoji_frame, text=emoji, font=("Segoe UI Emoji", 14),
+                            bg='#2d2d2d', fg='white', relief=tk.FLAT, cursor="hand2",
+                            width=3, height=1,
+                            command=lambda e=emoji, c=code: self.insert_emoji(c))
+            btn.grid(row=row, column=col, padx=2, pady=2)
+            
+            # Подсказка с кодом
+            self.create_tooltip(btn, f"Код: {code}")
+            
+            col += 1
+            if col >= max_cols:
+                col = 0
+                row += 1
+        
+        # Кнопка закрытия
+        tk.Button(self.emoji_window, text="Закрыть", command=self.emoji_window.destroy,
+                  bg='#4a4a4a', fg='white', font=("Segoe UI", 9, "bold"),
+                  relief=tk.FLAT, cursor="hand2").pack(pady=10)
+    
+    def create_tooltip(self, widget, text):
+        """Создаёт всплывающую подсказку"""
+        def on_enter(e):
+            tooltip = Toplevel(widget)
+            tooltip.wm_overrideredirect(True)
+            tooltip.wm_geometry(f"+{e.x_root+10}+{e.y_root+10}")
+            label = tk.Label(tooltip, text=text, bg="#333333", fg="white", 
+                             font=("Segoe UI", 9), relief=tk.SOLID, borderwidth=1)
+            label.pack()
+            widget.tooltip = tooltip
+        
+        def on_leave(e):
+            if hasattr(widget, 'tooltip'):
+                widget.tooltip.destroy()
+                del widget.tooltip
+        
+        widget.bind("<Enter>", on_enter)
+        widget.bind("<Leave>", on_leave)
+    
+    def on_emoji_close(self):
+        if self.emoji_window:
+            self.emoji_window.destroy()
+            self.emoji_window = None
+    
+    def insert_emoji(self, code):
+        """Вставляет код смайлика в поле ввода"""
+        cursor_pos = self.message_entry.index(tk.INSERT)
+        current_text = self.message_entry.get()
+        new_text = current_text[:cursor_pos] + code + current_text[cursor_pos:]
+        self.message_entry.delete(0, tk.END)
+        self.message_entry.insert(0, new_text)
+        self.message_entry.icursor(cursor_pos + len(code))
+        self.message_entry.focus()
+        
+        if self.emoji_window:
+            self.emoji_window.destroy()
+            self.emoji_window = None
     
     def request_online_users(self):
         try:
@@ -701,7 +913,8 @@ class ChatClient:
             'bg': '#1e1e1e', 'sidebar': '#252525', 'chat_bg': '#2d2d2d', 
             'input_bg': '#3c3c3c', 'text': '#d4d4d4', 'time': '#6a9955', 
             'server': '#dcdcaa', 'system': '#c586c0', 'error': '#f48771', 
-            'button': '#0e639c', 'file_button': '#6a9955', 'color_button': '#9c3e9c'
+            'button': '#0e639c', 'file_button': '#6a9955', 'color_button': '#9c3e9c',
+            'emoji_button': '#d4a017'
         }
         
         main_frame = tk.Frame(self.root, bg=self.colors['bg'])
@@ -763,6 +976,12 @@ class ChatClient:
         
         input_frame = tk.Frame(center_panel, bg=self.colors['bg'])
         input_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        # Кнопка смайликов
+        self.emoji_btn = tk.Button(input_frame, text="😊", command=self.show_emoji_panel,
+                                    bg=self.colors['emoji_button'], fg="white", font=("Segoe UI Emoji", 12),
+                                    relief=tk.FLAT, cursor="hand2", width=3)
+        self.emoji_btn.pack(side=tk.LEFT, padx=(0, 5))
         
         self.message_entry = tk.Entry(input_frame, font=("Segoe UI", 10), bg=self.colors['input_bg'], 
                                        fg=self.colors['text'], relief=tk.FLAT, insertbackground=self.colors['text'])
@@ -935,7 +1154,10 @@ class ChatClient:
                     
                     new_text = simpledialog.askstring("Редактирование", "Новый текст:", initialvalue=current_text)
                     if new_text and new_text != current_text:
-                        self.sock.send(f"CMD:EDIT|{msg_id}|{new_text}\n".encode('utf-8'))
+                        if self.current_chat == "general":
+                            self.sock.send(f"CMD:EDIT|general|{msg_id}|{new_text}\n".encode('utf-8'))
+                        else:
+                            self.sock.send(f"CMD:EDIT|{self.current_chat}|{msg_id}|{new_text}\n".encode('utf-8'))
                     return
         except:
             pass
@@ -975,6 +1197,8 @@ class ChatClient:
                 break
     
     def insert_message_with_links(self, text, tag_name, time_str=None):
+        text = self.replace_emojis(text)
+        
         if time_str:
             self.chat_area.insert(tk.END, f"[{time_str}] ", "time")
         
@@ -1030,7 +1254,7 @@ class ChatClient:
         
         for msg in self.message_history:
             sender = msg.get('sender', '')
-            text = msg.get('text', '')
+            text = self.replace_emojis(msg.get('text', ''))
             msg_time = msg.get('time', '')
             edited = msg.get('edited', False)
             edit_mark = " (ред.)" if edited else ""
@@ -1059,7 +1283,7 @@ class ChatClient:
     
     def display_message(self, msg):
         sender = msg.get('sender', '')
-        text = msg.get('text', '')
+        text = self.replace_emojis(msg.get('text', ''))
         msg_time = msg.get('time', '')
         edited = msg.get('edited', False)
         edit_mark = " (ред.)" if edited else ""
@@ -1088,7 +1312,7 @@ class ChatClient:
     
     def display_private_message(self, msg, partner):
         sender = msg.get('sender', '')
-        text = msg.get('text', '')
+        text = self.replace_emojis(msg.get('text', ''))
         msg_time = msg.get('time', '')
         
         self.chat_area.insert(tk.END, f"[{msg_time}] ", "time")
@@ -1105,6 +1329,7 @@ class ChatClient:
         self.chat_area.see(tk.END)
     
     def add_system_message(self, text):
+        text = self.replace_emojis(text)
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.chat_area.insert(tk.END, f"[{timestamp}] ✨ {text}\n", "system")
         self.chat_area.see(tk.END)
@@ -1132,7 +1357,12 @@ class ChatClient:
         if text.startswith("/edit "):
             parts = text.split(" ", 2)
             if len(parts) >= 3:
-                self.sock.send(f"CMD:EDIT|{parts[1]}|{parts[2]}\n".encode('utf-8'))
+                msg_id = parts[1]
+                new_text = parts[2]
+                if self.current_chat == "general":
+                    self.sock.send(f"CMD:EDIT|general|{msg_id}|{new_text}\n".encode('utf-8'))
+                else:
+                    self.sock.send(f"CMD:EDIT|{self.current_chat}|{msg_id}|{new_text}\n".encode('utf-8'))
         elif text.startswith("/color "):
             parts = text.split(" ", 1)
             if len(parts) >= 2:
@@ -1144,6 +1374,8 @@ class ChatClient:
             self.load_files_list()
         elif text == "/online":
             self.request_online_users()
+        elif text == "/emoji":
+            self.show_emoji_panel()
     
     # ========== ПОЛУЧЕНИЕ СООБЩЕНИЙ ==========
     def receive_messages(self):
@@ -1300,6 +1532,21 @@ class ChatClient:
                     if self.current_chat == target:
                         self.root.after(0, lambda msg=pm, t=target: self.display_private_message(msg, t))
                     
+                elif msg_type == "private_message_edited":
+                    target = msg.get("target")
+                    msg_id = msg.get("id")
+                    new_text = msg.get("text")
+                    
+                    if target in self.private_messages:
+                        for m in self.private_messages[target]:
+                            if m.get('id') == msg_id:
+                                m['text'] = new_text
+                                m['edited'] = True
+                                break
+                    self.save_private_messages(target)
+                    if self.current_chat == target:
+                        self.root.after(0, self.refresh_chat_display)
+                    
                 elif msg_type == "message_edited":
                     msg_id = msg["id"]
                     new_text = msg["text"]
@@ -1372,4 +1619,3 @@ class ChatClient:
 
 if __name__ == "__main__":
     client = ChatClient()
-#:3
