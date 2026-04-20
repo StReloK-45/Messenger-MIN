@@ -1209,10 +1209,18 @@ class ChatServer:
                 
                 self.log(f"✅ Личный файл сохранён: {save_path}", "system")
                 
+                # Найти сокет получателя
                 target_socket = None
                 for s, data in self.client_data.items():
                     if data['nickname'] == target:
                         target_socket = s
+                        break
+                
+                # Найти сокет отправителя
+                sender_socket = None
+                for s, data in self.client_data.items():
+                    if data['nickname'] == sender:
+                        sender_socket = s
                         break
                 
                 payload = json.dumps({
@@ -1221,9 +1229,13 @@ class ChatServer:
                     "data": {"sender": sender, "name": filename, "size": filesize, "id": file_id}
                 }, ensure_ascii=True)
                 
+                # Отправить получателю
                 if target_socket:
                     self.send_to_client(target_socket, "JSON_PAYLOAD:" + payload)
-                self.send_to_client(client, "JSON_PAYLOAD:" + payload)
+                
+                # Отправить отправителю
+                if sender_socket:
+                    self.send_to_client(sender_socket, "JSON_PAYLOAD:" + payload)
                 
             file_socket.close()
                 
