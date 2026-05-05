@@ -220,5 +220,5 @@ received_files/
 data/
 
 *.exe
-"client.py" 
-"server.py" 
+client.py
+server.py
