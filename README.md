@@ -36,8 +36,14 @@
 ```bash
 git clone https://github.com/31062024/Messenger-MIN
 cd Messenger-MIN
-python server.py # для хоста запускающего сервер
-python client.py # для пользователей
+
+# для хоста запускающего сервер
+cd server
+python main.py 
+
+# для пользователей
+cd client
+python main.py 
 ```
 
 > [!IMPORTANT]
@@ -46,7 +52,6 @@ python client.py # для пользователей
 > git pull
 > ```
 > ***Либо** устанавливайте стабильную версию мессенджера в релизах*
-
 ---
 
 **Автор**: [StReLoK_45](https://github.com/StReloK-45)

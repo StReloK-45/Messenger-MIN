@@ -207,6 +207,7 @@ pm_*.json
 # OS
 Thumbs.db
 .DS_Store
+
 # Messenger-MIN configuration files
 chat_history.json
 users.json
@@ -216,9 +217,10 @@ private_messages.json
 pm_StReLoK_45_CrazyDrozd.json
 banned_ips.json
 chat_config.ini
+client.py
+server.py
+
 received_files/
 data/
 
 *.exe
-client.py
-server.py
