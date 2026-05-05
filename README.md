@@ -33,7 +33,7 @@
 > Скачать версию **Python** из промежутка можно по этой [ссылке](https://www.python.org/downloads/)
 
 ### Скачивание 
-#### (v1.2.0+)
+#### v1.2.0+
 ```bash
 git clone https://github.com/31062024/Messenger-MIN
 cd Messenger-MIN
@@ -47,7 +47,7 @@ cd client
 python main.py
 ```
 
-#### (v1.0.0 — v1.1.2)
+#### v1.0.0 — v1.1.2
 ```bash
 git clone https://github.com/31062024/Messenger-MIN
 cd Messenger-MIN
