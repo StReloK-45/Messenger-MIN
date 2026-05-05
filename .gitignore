@@ -183,7 +183,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# ========== ДОБАВЛЕНО ДЛЯ ПРОЕКТА ==========
 # Данные сервера
 data/
 received_files/
@@ -208,3 +207,16 @@ pm_*.json
 # OS
 Thumbs.db
 .DS_Store
+# Messenger-MIN configuration files
+chat_history.json
+users.json
+nick_colors.json
+private_chats.json
+private_messages.json
+pm_StReLoK_45_CrazyDrozd.json
+banned_ips.json
+chat_config.ini
+received_files/
+data/
+
+*.exe
