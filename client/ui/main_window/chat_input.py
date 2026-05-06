@@ -12,6 +12,10 @@ class ChatInput:
         self.ui = ui
         self.message_entry = None
     
+    def __init__(self, ui):
+        self.ui = ui
+        self.message_entry = None
+    
     def setup(self, parent):
         """Создаёт поле ввода"""
         input_frame = tk.Frame(parent, bg=self.ui.color_manager.get_color('chat_bg'), height=55)
@@ -24,7 +28,7 @@ class ChatInput:
         tk.Button(input_bg, text="😊", font=("Segoe UI Emoji", 16),
                   bg=self.ui.color_manager.get_color('input_bg'), fg=self.ui.color_manager.get_color('text'),
                   relief=tk.FLAT, cursor="hand2", bd=0,
-                  command=self.add_emoji).pack(side=tk.LEFT, padx=(5, 0), pady=2)
+                  command=self.ui.add_emoji).pack(side=tk.LEFT, padx=(5, 0), pady=2)
         
         self.message_entry = tk.Entry(input_bg,
                                       font=("Segoe UI", self.ui.app.settings.font_size),
@@ -44,9 +48,75 @@ class ChatInput:
                   bg=self.ui.color_manager.get_color('accent'), fg='white',
                   relief=tk.FLAT, cursor="hand2", bd=0,
                   command=self.send_message).pack(side=tk.RIGHT, padx=(0, 5), pady=2)
+        
+        print("[DEBUG] ChatInput.setup завершён, message_entry создан")
     
     def add_emoji(self):
-        self.message_entry.insert(tk.END, "😊")
+        """Открывает окно с выбором смайликов"""
+        print("[DEBUG] add_emoji вызван в chat_input")
+        
+        if self.message_entry is None:
+            print("[DEBUG] message_entry is None!")
+            return
+        
+        emoji_window = tk.Toplevel(self.ui.app.root)
+        emoji_window.title("Выберите смайлик")
+        emoji_window.geometry("400x300")
+        emoji_window.configure(bg=self.ui.color_manager.get_color('bg'))
+        emoji_window.transient(self.ui.app.root)
+        emoji_window.grab_set()
+        
+        emoji_window.update_idletasks()
+        x = (emoji_window.winfo_screenwidth() // 2) - 200
+        y = (emoji_window.winfo_screenheight() // 2) - 150
+        emoji_window.geometry(f"+{x}+{y}")
+        
+        canvas = tk.Canvas(emoji_window, bg=self.ui.color_manager.get_color('bg'), highlightthickness=0)
+        scrollbar = tk.Scrollbar(emoji_window, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.ui.color_manager.get_color('bg'))
+        
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        emojis = [
+            "😊", "😂", "❤️", "😍", "👍", "🔥", "🥲", "😭", "😎", "🤔",
+            "😡", "🥺", "😱", "🎉", "✨", "💀", "🤣", "💯", "👀", "💔",
+            "😈", "👋", "🤝", "🙏", "💪", "🍺", "🍻", "🎮", "💻", "🚀"
+        ]
+        
+        row = 0
+        col = 0
+        entry = self.message_entry
+        def insert(e):
+            print(f"[DEBUG] Вставка смайлика: {e}")
+            entry.insert(tk.INSERT, e)
+            emoji_window.destroy()
+        
+        for emoji in emojis:
+            btn = tk.Button(scrollable_frame, text=emoji, font=("Segoe UI Emoji", 16),
+                           bg=self.ui.color_manager.get_color('bg'),
+                           fg=self.ui.color_manager.get_color('text'),
+                           relief=tk.FLAT, cursor="hand2",
+                           command=lambda e=emoji: insert(e))
+            btn.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
+            col += 1
+            if col >= 8:
+                col = 0
+                row += 1
+        
+        for i in range(8):
+            scrollable_frame.columnconfigure(i, weight=1)
+    
+    def insert_emoji(self, emoji, window):
+        """Вставляет выбранный смайлик в поле ввода"""
+        print(f"[DEBUG] Вставка смайлика: {emoji}")
+        if self.message_entry:
+            self.message_entry.insert(tk.INSERT, emoji)
+        window.destroy()
     
     def send_message(self, event=None):
         text = self.message_entry.get().strip()

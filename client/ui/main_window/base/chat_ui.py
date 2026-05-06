@@ -20,6 +20,7 @@ from .data_manager import DataManager
 from .ui_components import UIComponents
 from .message_handlers import MessageHandlers
 from .event_handlers import EventHandlers
+from ..chat_input import ChatInput
 
 class ChatUI:
     def __init__(self, app):
@@ -40,6 +41,7 @@ class ChatUI:
         self.top_bar = TopBar(self)
         self.theme_manager = ThemeManager(self)
         self.friends_manager = FriendsManager(self)
+        self.chat_input = ChatInput(self)
         
         # Компоненты UI
         self._chat_canvas = None
@@ -86,8 +88,9 @@ class ChatUI:
         self.left_panel.update_chats_list()
     
     def add_emoji(self):
-        if self.ui_components.message_entry:
-            self.ui_components.message_entry.insert(tk.END, "😊")
+        #Окно выбора смайла
+        print("[DEBUG] add_emoji вызван в chat_ui")
+        self.chat_input.add_emoji()
     
     def add_log(self, text):
         print(f"[LOG] {text}")

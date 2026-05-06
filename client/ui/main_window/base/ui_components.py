@@ -195,8 +195,9 @@ class UIComponents:
         self.ui.chat_canvas = self.chat_canvas
         self.ui.messages_frame = self.messages_frame
         self.ui.canvas_window = self.canvas_window
-        self.ui.messages_frame = self.messages_frame
-        self.ui.canvas_window = self.canvas_window
+        
+        # Передаём ссылку на поле ввода в chat_input
+        self.ui.chat_input.message_entry = self.message_entry
         
         # Принудительное обновление
         self.chat_canvas.update_idletasks()
