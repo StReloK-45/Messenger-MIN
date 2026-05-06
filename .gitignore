@@ -224,3 +224,5 @@ received_files/
 data/
 
 *.exe
+auto-pull_log.txt
+git_autopull.bat
