@@ -225,4 +225,3 @@ data/
 
 *.exe
 auto-pull_log.txt
-git_autopull.bat
