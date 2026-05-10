@@ -197,6 +197,7 @@ class UIComponents:
         self.ui.canvas_window = self.canvas_window
         self.ui.messages_frame = self.messages_frame
         self.ui.canvas_window = self.canvas_window
+        self.ui.chat_input.message_entry = self.message_entry
         
         # Принудительное обновление
         self.chat_canvas.update_idletasks()
