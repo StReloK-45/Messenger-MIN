@@ -222,3 +222,6 @@ data/
 *.exe
 "client.py" 
 "server.py" 
+"*.exe" 
+"dist/" 
+"build/" 
