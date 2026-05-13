@@ -56,3 +56,4 @@ python client.py # для пользователей
 **Советник**: [CrazyDrozd](https://github.com/CrazyDrozd)
 > * Ведение GitHub репозитория.
 > * Основная работа над README.md и лицензией.
+> * Помощь в раоботе над общим сервером.

@@ -46,7 +46,7 @@ class NetworkManager:
         ip_entry.select_range(0, tk.END)
         ip_entry.focus()
         
-        tk.Label(dialog, text="Пример: 192.168.0.155 или 26.66.193.221 (Radmin VPN)", 
+        tk.Label(dialog, text="Пример: 192.168.0.155 или 109.248.37.122 (Общая сеть от создателя)", 
                  font=("Segoe UI", 8),
                  bg='#1e1e1e', fg='#6a9955').pack()
         
