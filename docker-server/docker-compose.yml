@@ -1,0 +1,18 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  messenger-server:
+    build: 
+      context: ..
+      dockerfile: docker-server/Dockerfile
+    container_name: messenger-min-server
+    restart: unless-stopped
+    ports:
+      - "5555:5555"
+      - "5556:5556"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=Europe/Moscow
+      - PYTHONUNBUFFERED=1
