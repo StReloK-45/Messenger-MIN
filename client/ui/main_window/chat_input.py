@@ -29,6 +29,9 @@ class ChatInput:
         self.message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10, pady=2)
         self.message_entry.bind("<Return>", self.send_message)
         
+        # Добавляем поддержку вставки через ПКМ
+        self.message_entry.bind("<Button-3>", self.show_context_menu)
+        
         tk.Button(input_bg, text="📎", font=("Segoe UI", 14),
                   bg=self.ui.color_manager.get_color('input_bg'), fg=self.ui.color_manager.get_color('text'),
                   relief=tk.FLAT, cursor="hand2", bd=0,
@@ -38,6 +41,43 @@ class ChatInput:
                   bg=self.ui.color_manager.get_color('accent'), fg='white',
                   relief=tk.FLAT, cursor="hand2", bd=0,
                   command=self.send_message).pack(side=tk.RIGHT, padx=(0, 5), pady=2)
+    
+    def show_context_menu(self, event):
+        """Показывает контекстное меню для поля ввода"""
+        menu = tk.Menu(self.ui.app.root, tearoff=0, bg='#3c3c3c', fg='white')
+        menu.add_command(label="Вырезать", command=self.cut_text)
+        menu.add_command(label="Копировать", command=self.copy_text)
+        menu.add_command(label="Вставить", command=self.paste_text)
+        menu.add_separator()
+        menu.add_command(label="Выделить всё", command=self.select_all)
+        menu.tk_popup(event.x_root, event.y_root)
+    
+    def cut_text(self):
+        try:
+            self.message_entry.event_generate("<<Cut>>")
+        except:
+            pass
+    
+    def copy_text(self):
+        try:
+            self.message_entry.event_generate("<<Copy>>")
+        except:
+            pass
+    
+    def paste_text(self):
+        try:
+            self.message_entry.event_generate("<<Paste>>")
+        except:
+            # Если не сработало, используем альтернативный метод
+            try:
+                text = self.ui.app.root.clipboard_get()
+                self.message_entry.insert(tk.INSERT, text)
+            except:
+                pass
+    
+    def select_all(self):
+        self.message_entry.select_range(0, tk.END)
+        self.message_entry.focus()
     
     def add_emoji(self):
         """Открывает окно с выбором смайликов"""

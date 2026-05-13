@@ -9,15 +9,14 @@ class HotkeyManager:
         self.register()
     
     def register(self):
-        # Привязываем горячие клавиши к главному окну после его создания
-        # Пока нет главного окна - пропускаем
         pass
     
     def register_to_window(self, window):
-        """Привязывает горячие клавиши к указанному окну"""
+        """Привязывает горячие клавиши к указанкому окну"""
         if not window:
             return
         
+        # Основные привязки
         window.bind('<Control-f>', lambda e: self.open_search())
         window.bind('<Control-F>', lambda e: self.open_search())
         window.bind('<Control-n>', lambda e: self.create_group())
@@ -33,6 +32,34 @@ class HotkeyManager:
         window.bind('<Control-=>', lambda e: self.increase_font())
         window.bind('<Up>', self.history_up)
         window.bind('<Down>', self.history_down)
+        
+        # Копирование, вставка, вырезание для любой раскладки
+        # Используем событие KeyPress для перехвата всех комбинаций
+        window.bind('<KeyPress>', self.on_key_press)
+        
+        # Также привязываем стандартные комбинации
+        window.bind('<Control-v>', self.paste)
+        window.bind('<Control-V>', self.paste)
+        window.bind('<Control-c>', self.copy)
+        window.bind('<Control-C>', self.copy)
+        window.bind('<Control-x>', self.cut)
+        window.bind('<Control-X>', self.cut)
+    
+    def on_key_press(self, event):
+        """Обработка нажатий клавиш для поддержки русской раскладки"""
+        # Ctrl+С (русская буква С) - копирование
+        if event.state & 0x4 and event.keysym == 'cyrillic_es':
+            self.copy(event)
+            return "break"
+        # Ctrl+М (русская буква М) - вставка
+        if event.state & 0x4 and event.keysym == 'cyrillic_em':
+            self.paste(event)
+            return "break"
+        # Ctrl+Ч (русская буква Ч) - вырезание
+        if event.state & 0x4 and event.keysym == 'cyrillic_che':
+            self.cut(event)
+            return "break"
+        return None
     
     def open_search(self):
         if hasattr(self.app, 'search') and self.app.search:
@@ -55,7 +82,7 @@ class HotkeyManager:
             self.app.ui.sidebar_menu.close()
     
     def quit_app(self):
-        self.app.auth_window.quit()
+        self.app.root.quit()
     
     def increase_font(self):
         if hasattr(self.app, 'settings'):
@@ -82,17 +109,69 @@ class HotkeyManager:
                 self.history_index += 1
             
             if self.history_index < len(self.history_buffer):
-                if hasattr(self.app.ui, 'message_entry'):
-                    self.app.ui.message_entry.delete(0, tk.END)
-                    self.app.ui.message_entry.insert(0, self.history_buffer[self.history_index])
+                if hasattr(self.app.ui, 'chat_input') and self.app.ui.chat_input.message_entry:
+                    self.app.ui.chat_input.message_entry.delete(0, tk.END)
+                    self.app.ui.chat_input.message_entry.insert(0, self.history_buffer[self.history_index])
     
     def history_down(self, event):
         if self.history_index >= 0:
             self.history_index -= 1
             if self.history_index >= 0 and hasattr(self.app, 'ui') and self.app.ui:
-                if hasattr(self.app.ui, 'message_entry'):
-                    self.app.ui.message_entry.delete(0, tk.END)
-                    self.app.ui.message_entry.insert(0, self.history_buffer[self.history_index])
+                if hasattr(self.app.ui, 'chat_input') and self.app.ui.chat_input.message_entry:
+                    self.app.ui.chat_input.message_entry.delete(0, tk.END)
+                    self.app.ui.chat_input.message_entry.insert(0, self.history_buffer[self.history_index])
             else:
-                if hasattr(self.app, 'ui') and self.app.ui and hasattr(self.app.ui, 'message_entry'):
-                    self.app.ui.message_entry.delete(0, tk.END)
+                if hasattr(self.app, 'ui') and self.app.ui and hasattr(self.app.ui, 'chat_input'):
+                    if self.app.ui.chat_input.message_entry:
+                        self.app.ui.chat_input.message_entry.delete(0, tk.END)
+    
+    def paste(self, event):
+        """Вставка текста из буфера обмена"""
+        try:
+            text = self.app.root.clipboard_get()
+            if hasattr(self.app, 'ui') and self.app.ui:
+                if hasattr(self.app.ui, 'chat_input') and self.app.ui.chat_input.message_entry:
+                    # Вставляем текст в текущую позицию курсора
+                    current_pos = self.app.ui.chat_input.message_entry.index(tk.INSERT)
+                    self.app.ui.chat_input.message_entry.insert(current_pos, text)
+        except Exception as e:
+            print(f"Paste error: {e}")
+        return "break"
+    
+    def copy(self, event):
+        """Копирование выделенного текста в буфер обмена"""
+        try:
+            if hasattr(self.app, 'ui') and self.app.ui:
+                if hasattr(self.app.ui, 'chat_input') and self.app.ui.chat_input.message_entry:
+                    try:
+                        # Получаем выделенный текст
+                        start = self.app.ui.chat_input.message_entry.index(tk.SEL_FIRST)
+                        end = self.app.ui.chat_input.message_entry.index(tk.SEL_LAST)
+                        selected = self.app.ui.chat_input.message_entry.get(start, end)
+                        if selected:
+                            self.app.root.clipboard_clear()
+                            self.app.root.clipboard_append(selected)
+                    except tk.TclError:
+                        pass
+        except Exception as e:
+            print(f"Copy error: {e}")
+        return "break"
+    
+    def cut(self, event):
+        """Вырезание выделенного текста в буфер обмена"""
+        try:
+            if hasattr(self.app, 'ui') and self.app.ui:
+                if hasattr(self.app.ui, 'chat_input') and self.app.ui.chat_input.message_entry:
+                    try:
+                        start = self.app.ui.chat_input.message_entry.index(tk.SEL_FIRST)
+                        end = self.app.ui.chat_input.message_entry.index(tk.SEL_LAST)
+                        selected = self.app.ui.chat_input.message_entry.get(start, end)
+                        if selected:
+                            self.app.root.clipboard_clear()
+                            self.app.root.clipboard_append(selected)
+                            self.app.ui.chat_input.message_entry.delete(start, end)
+                    except tk.TclError:
+                        pass
+        except Exception as e:
+            print(f"Cut error: {e}")
+        return "break"

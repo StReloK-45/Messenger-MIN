@@ -2,13 +2,25 @@
 import tkinter as tk
 import datetime
 import time
+import re
+import webbrowser
 
 class MessageHandlers:
     def __init__(self, ui):
         self.ui = ui
     
+    def _on_label_click(self, event, text):
+        """Обработка клика по Label с текстом для открытия ссылок"""
+        url_pattern = r'https?://[^\s]+|www\.[^\s]+'
+        urls = re.findall(url_pattern, text)
+        if urls:
+            url = urls[0]
+            if not url.startswith('http'):
+                url = 'http://' + url
+            webbrowser.open(url)
+    
     def display_bubble_message(self, sender, text, msg_time, is_my=False):
-        """Красивый квадратный пузырь"""
+        """Красивый квадратный пузырь с кликабельными ссылками"""
         try:
             if self.ui.ui_components.messages_frame is None:
                 return
@@ -29,10 +41,12 @@ class MessageHandlers:
                 tk.Label(bubble, text=self.ui.app.settings.nickname, font=("Segoe UI", 9, "bold"),
                          fg=my_color, bg=self.ui.color_manager.get_color('my_bubble')).pack(anchor='w')
                 
-                tk.Label(bubble, text=text, font=("Segoe UI", self.ui.app.settings.font_size),
-                         fg=self.ui.color_manager.get_color('my_text'),
-                         bg=self.ui.color_manager.get_color('my_bubble'),
-                         justify=tk.LEFT, wraplength=350, padx=2, pady=4).pack()
+                msg_label = tk.Label(bubble, text=text, font=("Segoe UI", self.ui.app.settings.font_size),
+                                     fg=self.ui.color_manager.get_color('my_text'),
+                                     bg=self.ui.color_manager.get_color('my_bubble'),
+                                     justify=tk.LEFT, wraplength=350, padx=2, pady=4, cursor="hand2")
+                msg_label.pack()
+                msg_label.bind("<Button-1>", lambda e, t=text: self._on_label_click(e, t))
                 
                 tk.Label(bubble, text=msg_time, font=("Segoe UI", 7),
                          fg=self.ui.color_manager.get_color('time'),
@@ -52,10 +66,12 @@ class MessageHandlers:
                 nick_label.pack(anchor='w')
                 nick_label.bind("<Button-3>", lambda e, s=sender: self.ui.show_context_menu(e, s))
                 
-                tk.Label(bubble, text=text, font=("Segoe UI", self.ui.app.settings.font_size),
-                         fg=self.ui.color_manager.get_color('other_text'),
-                         bg=self.ui.color_manager.get_color('other_bubble'),
-                         justify=tk.LEFT, wraplength=350, padx=2, pady=4).pack()
+                msg_label = tk.Label(bubble, text=text, font=("Segoe UI", self.ui.app.settings.font_size),
+                                     fg=self.ui.color_manager.get_color('other_text'),
+                                     bg=self.ui.color_manager.get_color('other_bubble'),
+                                     justify=tk.LEFT, wraplength=350, padx=2, pady=4, cursor="hand2")
+                msg_label.pack()
+                msg_label.bind("<Button-1>", lambda e, t=text: self._on_label_click(e, t))
                 
                 tk.Label(bubble, text=msg_time, font=("Segoe UI", 7),
                          fg=self.ui.color_manager.get_color('time'),
@@ -92,7 +108,6 @@ class MessageHandlers:
         if self.ui.data_manager.current_chat == "general":
             self.ui.app.network.send(text)
         elif self.ui.data_manager.current_chat_type == "private":
-            # Отправляем, но НЕ отображаем локально - ждём подтверждение от сервера
             self.ui.app.network.send_raw(f"CMD:PM|{self.ui.data_manager.current_chat}|{text}")
         
         self.ui.ui_components.message_entry.delete(0, tk.END)

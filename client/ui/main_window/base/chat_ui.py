@@ -41,7 +41,7 @@ class ChatUI:
         self.top_bar = TopBar(self)
         self.theme_manager = ThemeManager(self)
         self.friends_manager = FriendsManager(self)
-        self.chat_input = ChatInput(self)  # <--- ЭТО ВАЖНО!
+        self.chat_input = ChatInput(self)
         
         # Компоненты UI
         self._chat_canvas = None
