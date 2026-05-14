@@ -168,7 +168,7 @@ class ChatInput:
         filesize = os.path.getsize(file_path)
         
         if filesize > 250 * 1024 * 1024:
-            self.ui.chat_display.add_system_message("❌ Файл слишком большой (макс 250MB)")
+            self.ui.chat_display.add_system_message("❌ Файл слишком большой (максимум 250MB)")
             return
         
         self.ui.chat_display.add_system_message(f"⏳ Отправка файла '{filename}'...")

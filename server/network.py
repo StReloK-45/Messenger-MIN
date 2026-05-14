@@ -9,6 +9,13 @@ class NetworkManager:
         self.server = server
         self.lock = threading.Lock()
     
+    def _log(self, message, level="info"):
+        """Безопасное логгирование"""
+        if hasattr(self.server, 'log'):
+            self.server.log(message, level)
+        else:
+            print(f"[{level}] {message}")
+    
     def start_servers(self):
         self.start_chat_server()
         self.start_file_server()
@@ -29,10 +36,10 @@ class NetworkManager:
                     if ip in self.server.storage.banned_ips:
                         client.send("BANNED\n".encode('utf-8'))
                         client.close()
-                        self.server.log(f"🚫 Забаненный IP: {ip}", "error")
+                        self._log(f"🚫 Забаненный IP: {ip}", "error")
                         continue
                     
-                    self.server.log(f"[+] Новое подключение: {addr}", "system")
+                    self._log(f"[+] Новое подключение: {addr}", "system")
                     client.send("AUTH_REQUIRED\n".encode('utf-8'))
                     threading.Thread(target=self.server.auth.handle_auth_loop, args=(client, addr), daemon=True).start()
                     
@@ -40,10 +47,10 @@ class NetworkManager:
                     continue
                 except Exception as e:
                     if self.server.running:
-                        self.server.log(f"Ошибка accept: {e}", "error")
+                        self._log(f"Ошибка accept: {e}", "error")
         
         threading.Thread(target=accept_clients, daemon=True).start()
-        self.server.log(f"💬 Чат сервер запущен на порту {self.server.config.PORT}", "system")
+        self._log(f"💬 Чат сервер запущен на порту {self.server.config.PORT}", "system")
     
     def start_file_server(self):
         file_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -56,7 +63,7 @@ class NetworkManager:
                 try:
                     file_socket.settimeout(1)
                     fs, addr = file_socket.accept()
-                    self.server.log(f"[+] Файловое подключение: {addr}", "system")
+                    self._log(f"[+] Файловое подключение: {addr}", "system")
                     threading.Thread(target=self.server.files.handle_file, args=(fs, addr), daemon=True).start()
                 except socket.timeout:
                     continue
@@ -64,7 +71,7 @@ class NetworkManager:
                     pass
         
         threading.Thread(target=handle_connections, daemon=True).start()
-        self.server.log(f"📁 Файловый сервер запущен на порту {self.server.config.FILE_PORT}", "system")
+        self._log(f"📁 Файловый сервер запущен на порту {self.server.config.FILE_PORT}", "system")
     
     def broadcast(self, message, exclude_socket=None):
         with self.lock:
@@ -94,5 +101,6 @@ class NetworkManager:
             except:
                 pass
             self.broadcast(json.dumps({"type": "notification", "text": f"{name} покинул чат"}, ensure_ascii=False))
-            self.server.log(f"👤 {name} отключился | Онлайн: {len(self.server.clients)}", "server")
-            self.server.root.after(0, self.server.update_online_display)
+            self._log(f"👤 {name} отключился | Онлайн: {len(self.server.clients)}", "server")
+            if hasattr(self.server, 'update_online_display'):
+                self.server.update_online_display()

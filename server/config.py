@@ -18,15 +18,23 @@ class ChatConfig:
         
         self.DATA_DIR = os.path.join(self.BASE_DIR, "data")
         
-        self.USERS_FILE = os.path.join(self.DATA_DIR, "users.json")
-        self.CHAT_HISTORY_FILE = os.path.join(self.DATA_DIR, "chat_history.json")
-        self.PRIVATE_MESSAGES_FILE = os.path.join(self.DATA_DIR, "private_messages.json")
-        self.BANNED_IPS_FILE = os.path.join(self.DATA_DIR, "banned_ips.json")
+        # Только SQLite база данных (никаких JSON)
+        self.DATABASE_PATH = os.path.join(self.DATA_DIR, "database.db")
+        
+        # Папка для полученных файлов
         self.RECEIVED_FILES_DIR = os.path.join(self.DATA_DIR, "received_files")
+        
+        # Настройки сервера
+        self.MAX_CONNECTIONS = 100
+        self.BUFFER_SIZE = 4096
+        self.TIMEOUT = 60
     
     def ensure_dirs(self):
+        """Создаёт только папки (без JSON файлов)"""
         os.makedirs(self.DATA_DIR, exist_ok=True)
         os.makedirs(self.RECEIVED_FILES_DIR, exist_ok=True)
+        print(f"Папка данных: {self.DATA_DIR}")
+        print(f"Папка для файлов: {self.RECEIVED_FILES_DIR}")
     
     def get_local_ip(self):
         try:
