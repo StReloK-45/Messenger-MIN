@@ -445,11 +445,11 @@ class Database:
             return cursor.lastrowid
     
     def get_group_messages(self, group_id, limit=100):
-        """Получает сообщения группы"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
+            # Используем sender_name
             cursor.execute('''
-                SELECT sender_nickname, message, timestamp 
+                SELECT sender_name as sender, message, timestamp 
                 FROM group_messages 
                 WHERE group_id = ? 
                 ORDER BY timestamp ASC LIMIT ?

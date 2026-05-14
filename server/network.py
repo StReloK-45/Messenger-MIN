@@ -3,18 +3,12 @@ import socket
 import threading
 import json
 import time
+from logger import logger
 
 class NetworkManager:
     def __init__(self, server):
         self.server = server
         self.lock = threading.Lock()
-    
-    def _log(self, message, level="info"):
-        """Безопасное логгирование"""
-        if hasattr(self.server, 'log'):
-            self.server.log(message, level)
-        else:
-            print(f"[{level}] {message}")
     
     def start_servers(self):
         self.start_chat_server()
@@ -24,7 +18,7 @@ class NetworkManager:
         chat_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         chat_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         chat_socket.bind((self.server.config.HOST, self.server.config.PORT))
-        chat_socket.listen(100)
+        chat_socket.listen(45000)
         
         def accept_clients():
             while self.server.running:
@@ -36,10 +30,10 @@ class NetworkManager:
                     if ip in self.server.storage.banned_ips:
                         client.send("BANNED\n".encode('utf-8'))
                         client.close()
-                        self._log(f"🚫 Забаненный IP: {ip}", "error")
+                        logger.warning(f"Banned IP attempted connection: {ip}")
                         continue
                     
-                    self._log(f"[+] Новое подключение: {addr}", "system")
+                    logger.connection(ip, "connected to chat")
                     client.send("AUTH_REQUIRED\n".encode('utf-8'))
                     threading.Thread(target=self.server.auth.handle_auth_loop, args=(client, addr), daemon=True).start()
                     
@@ -47,10 +41,10 @@ class NetworkManager:
                     continue
                 except Exception as e:
                     if self.server.running:
-                        self._log(f"Ошибка accept: {e}", "error")
+                        logger.error(f"Socket accept error: {e}")
         
         threading.Thread(target=accept_clients, daemon=True).start()
-        self._log(f"💬 Чат сервер запущен на порту {self.server.config.PORT}", "system")
+        logger.success(f"Chat server started on port {self.server.config.PORT}")
     
     def start_file_server(self):
         file_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -63,15 +57,15 @@ class NetworkManager:
                 try:
                     file_socket.settimeout(1)
                     fs, addr = file_socket.accept()
-                    self._log(f"[+] Файловое подключение: {addr}", "system")
+                    logger.connection(addr[0], "file connection")
                     threading.Thread(target=self.server.files.handle_file, args=(fs, addr), daemon=True).start()
                 except socket.timeout:
                     continue
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"File server error: {e}")
         
         threading.Thread(target=handle_connections, daemon=True).start()
-        self._log(f"📁 Файловый сервер запущен на порту {self.server.config.FILE_PORT}", "system")
+        logger.success(f"File server started on port {self.server.config.FILE_PORT}")
     
     def broadcast(self, message, exclude_socket=None):
         with self.lock:
@@ -101,6 +95,6 @@ class NetworkManager:
             except:
                 pass
             self.broadcast(json.dumps({"type": "notification", "text": f"{name} покинул чат"}, ensure_ascii=False))
-            self._log(f"👤 {name} отключился | Онлайн: {len(self.server.clients)}", "server")
+            logger.info(f"Client disconnected: {name} | Online: {len(self.server.clients)}")
             if hasattr(self.server, 'update_online_display'):
                 self.server.update_online_display()

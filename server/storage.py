@@ -11,7 +11,7 @@ class Storage:
         self.db = Database(config.DATABASE_PATH)
         
         # Для обратной совместимости со старыми модулями
-        self.users_db = {}  # Временный кэш
+        self.users_db = {}
         self.messages_history = []
         self.files_list = []
         self.private_messages = {}
@@ -23,43 +23,55 @@ class Storage:
     
     def _load_cache(self):
         """Загружает данные в кэш для обратной совместимости"""
-        # Загружаем пользователей в кэш
-        users = self.db.get_all_users()
-        for user in users:
-            self.users_db[user['username']] = {
-                'username': user['username'],
-                'password_hash': user['password_hash'],
-                'salt': user.get('salt', ''),
-                'is_admin': user.get('is_admin', False),
-                'is_online': user.get('is_online', False)
-            }
-        
-        # Загружаем историю сообщений
-        messages = self.db.get_chat_history(500)
-        self.messages_history = [
-            {
-                'id': f"msg_{i}",
-                'sender': m['sender'],
-                'text': m['message'],
-                'time': m['timestamp'][11:16] if m['timestamp'] else "",
-                'edited': False
-            }
-            for i, m in enumerate(messages)
-        ]
-        self.message_counter = len(self.messages_history)
-        
-        # Загружаем забаненные IP
-        banned = self.db.get_banned_ips()
-        self.banned_ips = {b['identifier'] for b in banned}
+        try:
+            users = self.db.get_all_users()
+            for user in users:
+                self.users_db[user['username']] = {
+                    'username': user['username'],
+                    'password_hash': user.get('password_hash', ''),
+                    'salt': user.get('salt', ''),
+                    'is_admin': user.get('is_admin', False),
+                    'is_online': user.get('is_online', False)
+                }
+            
+            messages = self.db.get_chat_history(500)
+            self.messages_history = [
+                {
+                    'id': f"msg_{i}",
+                    'sender': m.get('sender', ''),
+                    'text': m.get('message', ''),
+                    'time': m.get('timestamp', '')[11:16] if m.get('timestamp') else "",
+                    'edited': False
+                }
+                for i, m in enumerate(messages)
+            ]
+            self.message_counter = len(self.messages_history)
+            
+            banned = self.db.get_banned_ips()
+            self.banned_ips = {b.get('identifier', '') for b in banned if b.get('identifier')}
+        except Exception as e:
+            print(f"⚠️ Ошибка загрузки кэша: {e}")
     
-    # ========== Методы для совместимости со старым кодом ==========
+    # ========== Методы для работы с пользователями ==========
     
     def get_user(self, username: str) -> Optional[Dict]:
         """Получает пользователя по username"""
         return self.db.get_user(username)
     
+    def get_user_by_username(self, username: str) -> Optional[Dict]:
+        """Алиас для get_user (для совместимости с auth.py)"""
+        return self.get_user(username)
+    
+    def get_user_by_id(self, user_id: int) -> Optional[Dict]:
+        """Получает пользователя по ID"""
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT id, username, password_hash, salt, is_admin, is_online, last_seen FROM users WHERE id = ?', (user_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+    
     def get_user_by_nickname(self, nickname: str) -> Optional[Dict]:
-        """Получает пользователя по nickname (username)"""
+        """Получает пользователя по nickname"""
         return self.db.get_user(nickname)
     
     def create_user(self, username: str, password_hash: str, salt: str, is_admin: bool = False) -> Optional[int]:
@@ -93,6 +105,13 @@ class Storage:
         """Забирает права администратора"""
         return self.db.demote_admin(username)
     
+    def update_user_nickname(self, username: str, nickname: str) -> bool:
+        """Обновляет никнейм пользователя"""
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('UPDATE users SET nickname = ? WHERE username = ?', (nickname, username))
+            return cursor.rowcount > 0
+    
     # ========== Методы для работы с сообщениями ==========
     
     def save_message(self, sender: str, message: str, is_private: bool = False, recipient: str = None) -> int:
@@ -118,9 +137,9 @@ class Storage:
         return [
             {
                 'id': f"msg_{i}",
-                'sender': m['sender'],
-                'text': m['message'],
-                'time': m['timestamp'][11:16] if m['timestamp'] else "",
+                'sender': m.get('sender', ''),
+                'text': m.get('message', ''),
+                'time': m.get('timestamp', '')[11:16] if m.get('timestamp') else "",
                 'edited': False
             }
             for i, m in enumerate(messages)
@@ -158,6 +177,10 @@ class Storage:
         """Проверяет, забанен ли IP"""
         return self.db.is_banned(ip)
     
+    def unban_ip(self, ip: str) -> bool:
+        """Разбанивает IP"""
+        return self.db.unban_ip(ip)
+    
     def save_bans(self):
         """Сохраняет баны (для совместимости)"""
         pass
@@ -165,13 +188,12 @@ class Storage:
     def get_banned_ips(self) -> List[str]:
         """Получает список забаненных IP"""
         bans = self.db.get_banned_ips()
-        return [b['identifier'] for b in bans]
+        return [b.get('identifier', '') for b in bans if b.get('identifier')]
     
     # ========== Друзья ==========
     
     def add_friend(self, username: str, friend: str) -> bool:
         """Добавляет друга"""
-        # Можно реализовать позже
         return True
     
     def get_friends(self, username: str) -> List[str]:
@@ -192,9 +214,17 @@ class Storage:
         """Получает группу по имени"""
         return self.db.get_group_by_name(name)
     
+    def get_group_by_id(self, group_id: int) -> Optional[Dict]:
+        """Получает группу по ID"""
+        return self.db.get_group_by_id(group_id)
+    
     def add_group_member(self, group_id: int, user_id: int) -> bool:
         """Добавляет участника в группу"""
         return self.db.add_group_member(group_id, user_id)
+    
+    def remove_group_member(self, group_id: int, user_id: int) -> bool:
+        """Удаляет участника из группы"""
+        return self.db.remove_group_member(group_id, user_id)
     
     def get_group_members(self, group_id: int) -> List[Dict]:
         """Получает участников группы"""
