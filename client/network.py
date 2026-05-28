@@ -6,15 +6,27 @@ import base64
 import tkinter as tk
 from tkinter import messagebox
 import time
+import struct
+import os
+from typing import Optional, Dict, Any, List
+
 
 class NetworkManager:
+    """Управление сетевыми соединениями клиента"""
+    
     def __init__(self, app):
         self.app = app
-        self.sock = None
+        self.sock: Optional[socket.socket] = None
         self.buffer = ""
         self.authenticated = False
-
-    def ask_server_ip(self):
+        self.reconnect_attempts = 0
+        self.max_reconnect_attempts = 5
+        self.reconnect_delay = 3
+        self._receive_thread: Optional[threading.Thread] = None
+        self._running = False
+    
+    def ask_server_ip(self) -> Optional[str]:
+        """Диалог ввода IP адреса сервера"""
         dialog = tk.Toplevel(self.app.root)
         dialog.title("Подключение к серверу")
         dialog.geometry("450x280")
@@ -28,7 +40,7 @@ class NetworkManager:
         y = (dialog.winfo_screenheight() // 2) - 140
         dialog.geometry(f"+{x}+{y}")
         
-        tk.Label(dialog, text="🌐 ПОДКЛЮЧЕНИЕ К СЕРВЕРУ", 
+        tk.Label(dialog, text="ПОДКЛЮЧЕНИЕ К СЕРВЕРУ", 
                  font=("Segoe UI", 14, "bold"),
                  bg='#1e1e1e', fg='#4ec9b0').pack(pady=20)
         
@@ -46,7 +58,7 @@ class NetworkManager:
         ip_entry.select_range(0, tk.END)
         ip_entry.focus()
         
-        tk.Label(dialog, text="Пример: 192.168.0.155 или 109.248.37.122 (Общая сеть от создателя)", 
+        tk.Label(dialog, text="Пример: 192.168.0.155 или localhost", 
                  font=("Segoe UI", 8),
                  bg='#1e1e1e', fg='#6a9955').pack()
         
@@ -68,7 +80,7 @@ class NetworkManager:
         btn_frame = tk.Frame(dialog, bg='#1e1e1e')
         btn_frame.pack(pady=20)
         
-        tk.Button(btn_frame, text="Подключиться →", command=on_submit,
+        tk.Button(btn_frame, text="Подключиться", command=on_submit,
                   bg='#0e639c', fg="white", font=("Segoe UI", 11, "bold"),
                   relief=tk.FLAT, cursor="hand2", padx=25, pady=5).pack(side=tk.LEFT, padx=5)
         
@@ -81,8 +93,9 @@ class NetworkManager:
         dialog.wait_window()
         
         return result["ip"] if not result["cancelled"] else None
-
-    def ask_auth(self):
+    
+    def ask_auth(self) -> Dict[str, Any]:
+        """Диалог авторизации (логин/регистрация)"""
         auth_dialog = tk.Toplevel(self.app.root)
         auth_dialog.title("Авторизация")
         auth_dialog.geometry("400x580")
@@ -132,7 +145,7 @@ class NetworkManager:
                 username = login_entry.get().strip()
                 password = pass_entry.get().strip()
                 if not username or not password:
-                    status_label.config(text="❌ Заполните все поля", fg='#f48771')
+                    status_label.config(text="Заполните все поля", fg='#f48771')
                     return
                 
                 encoded = base64.b64encode(password.encode()).decode()
@@ -158,15 +171,15 @@ class NetworkManager:
                         
                         auth_dialog.destroy()
                         self.authenticated = True
-                        threading.Thread(target=self.receive_loop, daemon=True).start()
+                        self._start_receive_thread()
                         
                     elif response.startswith("AUTH_FAIL"):
-                        error = response.split('|')[1] if '|' in response else "Ошибка"
-                        status_label.config(text=f"❌ {error}", fg='#f48771')
+                        error = response.split('|')[1] if '|' in response else "Ошибка авторизации"
+                        status_label.config(text=error, fg='#f48771')
                 except socket.timeout:
-                    status_label.config(text="❌ Сервер не отвечает", fg='#f48771')
+                    status_label.config(text="Сервер не отвечает", fg='#f48771')
                 except Exception as e:
-                    status_label.config(text=f"❌ Ошибка: {e}", fg='#f48771')
+                    status_label.config(text=f"Ошибка: {e}", fg='#f48771')
             
             tk.Button(form_frame, text="Войти", command=do_login,
                       bg='#0e639c', fg='white', font=("Segoe UI", 10, "bold"),
@@ -177,7 +190,7 @@ class NetworkManager:
                       bg='#1e1e1e', fg='#569cd6', font=("Segoe UI", 9),
                       relief=tk.FLAT, cursor="hand2").pack()
             
-            tk.Button(form_frame, text="🔑 Забыли пароль?",
+            tk.Button(form_frame, text="Забыли пароль?",
                       command=lambda: self.forgot_password_window(auth_dialog),
                       bg='#1e1e1e', fg='#ce9178', font=("Segoe UI", 9),
                       relief=tk.FLAT, cursor="hand2").pack(pady=(5, 0))
@@ -222,13 +235,13 @@ class NetworkManager:
                 nickname = nick_entry.get().strip()
                 
                 if not username or not password:
-                    status_label.config(text="❌ Заполните логин и пароль", fg='#f48771')
+                    status_label.config(text="Заполните логин и пароль", fg='#f48771')
                     return
                 if len(username) < 3:
-                    status_label.config(text="❌ Логин должен быть не менее 3 символов", fg='#f48771')
+                    status_label.config(text="Логин должен быть не менее 3 символов", fg='#f48771')
                     return
                 if len(password) < 4:
-                    status_label.config(text="❌ Пароль должен быть не менее 4 символов", fg='#f48771')
+                    status_label.config(text="Пароль должен быть не менее 4 символов", fg='#f48771')
                     return
                 if not nickname:
                     nickname = username
@@ -256,15 +269,15 @@ class NetworkManager:
                         
                         auth_dialog.destroy()
                         self.authenticated = True
-                        threading.Thread(target=self.receive_loop, daemon=True).start()
+                        self._start_receive_thread()
                         
                     elif response.startswith("AUTH_FAIL"):
-                        error = response.split('|')[1] if '|' in response else "Ошибка"
-                        status_label.config(text=f"❌ {error}", fg='#f48771')
+                        error = response.split('|')[1] if '|' in response else "Ошибка регистрации"
+                        status_label.config(text=error, fg='#f48771')
                 except socket.timeout:
-                    status_label.config(text="❌ Сервер не отвечает", fg='#f48771')
+                    status_label.config(text="Сервер не отвечает", fg='#f48771')
                 except Exception as e:
-                    status_label.config(text=f"❌ Ошибка: {e}", fg='#f48771')
+                    status_label.config(text=f"Ошибка: {e}", fg='#f48771')
             
             tk.Button(form_frame, text="Зарегистрироваться", command=do_register,
                       bg='#6a9955', fg='white', font=("Segoe UI", 10, "bold"),
@@ -277,7 +290,7 @@ class NetworkManager:
             
             login_entry.focus()
         
-        tk.Label(auth_dialog, text="🔐 АВТОРИЗАЦИЯ", 
+        tk.Label(auth_dialog, text="АВТОРИЗАЦИЯ", 
                  font=("Segoe UI", 14, "bold"),
                  bg='#1e1e1e', fg='#4ec9b0').pack(pady=20)
         
@@ -294,8 +307,9 @@ class NetworkManager:
         auth_dialog.wait_window()
         
         return result
-
+    
     def forgot_password_window(self, parent_dialog):
+        """Окно восстановления пароля"""
         parent_dialog.destroy()
         
         recovery_dialog = tk.Toplevel(self.app.root)
@@ -305,7 +319,7 @@ class NetworkManager:
         recovery_dialog.transient(self.app.root)
         recovery_dialog.grab_set()
         
-        tk.Label(recovery_dialog, text="🔐 ВОССТАНОВЛЕНИЕ ПАРОЛЯ",
+        tk.Label(recovery_dialog, text="ВОССТАНОВЛЕНИЕ ПАРОЛЯ",
                  font=("Segoe UI", 14, "bold"),
                  bg='#1e1e1e', fg='#4ec9b0').pack(pady=20)
         
@@ -326,7 +340,7 @@ class NetworkManager:
         def request_code():
             username = username_entry.get().strip()
             if not username:
-                status_label.config(text="❌ Введите логин!")
+                status_label.config(text="Введите логин!")
                 return
             
             self.send_raw(f"FORGOT|{username}")
@@ -339,16 +353,18 @@ class NetworkManager:
                 if response.startswith("RECOVERY_CODE|"):
                     code = response.split('|')[1]
                     if code == "ERROR":
-                        status_label.config(text="❌ Пользователь не найден!")
+                        status_label.config(text="Пользователь не найден!")
+                    elif code == "RATE_LIMIT":
+                        status_label.config(text="Слишком много запросов! Подождите.")
                     else:
-                        status_label.config(text=f"✅ Код отправлен администратору!", fg='#6a9955')
+                        status_label.config(text="Код отправлен администратору!", fg='#6a9955')
                         show_code_input(username)
                 else:
-                    status_label.config(text="❌ Пользователь не найден!")
+                    status_label.config(text="Пользователь не найден!")
             except socket.timeout:
-                status_label.config(text="❌ Сервер не отвечает!")
+                status_label.config(text="Сервер не отвечает!")
             except Exception as e:
-                status_label.config(text=f"❌ Ошибка: {e}")
+                status_label.config(text=f"Ошибка: {e}")
         
         tk.Button(step1_frame, text="Получить код", command=request_code,
                   bg='#0e639c', fg='white', font=("Segoe UI", 11, "bold"),
@@ -360,7 +376,7 @@ class NetworkManager:
             for widget in recovery_dialog.winfo_children():
                 widget.destroy()
             
-            tk.Label(recovery_dialog, text="🔐 ВВЕДИТЕ КОД",
+            tk.Label(recovery_dialog, text="ВВЕДИТЕ КОД",
                      font=("Segoe UI", 14, "bold"),
                      bg='#1e1e1e', fg='#4ec9b0').pack(pady=20)
             
@@ -380,7 +396,7 @@ class NetworkManager:
             def verify_code():
                 entered_code = code_entry.get().strip()
                 if not entered_code:
-                    status_label2.config(text="❌ Введите код!")
+                    status_label2.config(text="Введите код!")
                     return
                 
                 self.send_raw(f"VERIFY_CODE|{username}|{entered_code}")
@@ -395,14 +411,14 @@ class NetworkManager:
                     else:
                         attempts[0] -= 1
                         if attempts[0] > 0:
-                            status_label2.config(text=f"❌ Неверный код! Осталось попыток: {attempts[0]}", fg='#f48771')
+                            status_label2.config(text=f"Неверный код! Осталось попыток: {attempts[0]}", fg='#f48771')
                         else:
-                            status_label2.config(text="❌ Попытки исчерпаны!", fg='#f48771')
+                            status_label2.config(text="Попытки исчерпаны!", fg='#f48771')
                             recovery_dialog.after(1500, recovery_dialog.destroy)
                 except socket.timeout:
-                    status_label2.config(text="❌ Сервер не отвечает!")
+                    status_label2.config(text="Сервер не отвечает!")
                 except Exception as e:
-                    status_label2.config(text=f"❌ Ошибка: {e}")
+                    status_label2.config(text=f"Ошибка: {e}")
             
             tk.Button(recovery_dialog, text="Проверить код", command=verify_code,
                       bg='#0e639c', fg='white', font=("Segoe UI", 11, "bold"),
@@ -414,7 +430,7 @@ class NetworkManager:
             for widget in recovery_dialog.winfo_children():
                 widget.destroy()
             
-            tk.Label(recovery_dialog, text="🔐 НОВЫЙ ПАРОЛЬ",
+            tk.Label(recovery_dialog, text="НОВЫЙ ПАРОЛЬ",
                      font=("Segoe UI", 14, "bold"),
                      bg='#1e1e1e', fg='#4ec9b0').pack(pady=20)
             
@@ -436,13 +452,13 @@ class NetworkManager:
                 p2 = pass_entry2.get().strip()
                 
                 if not p1 or not p2:
-                    status_label3.config(text="❌ Заполните все поля!")
+                    status_label3.config(text="Заполните все поля!")
                     return
                 if p1 != p2:
-                    status_label3.config(text="❌ Пароли не совпадают!")
+                    status_label3.config(text="Пароли не совпадают!")
                     return
                 if len(p1) < 4:
-                    status_label3.config(text="❌ Пароль должен быть от 4 символов!")
+                    status_label3.config(text="Пароль должен быть от 4 символов!")
                     return
                 
                 encoded = base64.b64encode(p1.encode()).decode()
@@ -454,15 +470,15 @@ class NetworkManager:
                     self.sock.settimeout(None)
                     
                     if response == "PASSWORD_RESET_OK":
-                        messagebox.showinfo("Успех", "✅ Пароль успешно изменён!\nТеперь вы можете войти.")
+                        messagebox.showinfo("Успех", "Пароль успешно изменён!\nТеперь вы можете войти.")
                         recovery_dialog.destroy()
                         self.connect()
                     else:
-                        status_label3.config(text="❌ Ошибка сброса пароля!")
+                        status_label3.config(text="Ошибка сброса пароля!")
                 except socket.timeout:
-                    status_label3.config(text="❌ Сервер не отвечает!")
+                    status_label3.config(text="Сервер не отвечает!")
                 except Exception as e:
-                    status_label3.config(text=f"❌ Ошибка: {e}")
+                    status_label3.config(text=f"Ошибка: {e}")
             
             tk.Button(recovery_dialog, text="Сбросить пароль", command=reset_password,
                       bg='#6a9955', fg='white', font=("Segoe UI", 11, "bold"),
@@ -473,8 +489,9 @@ class NetworkManager:
         
         recovery_dialog.protocol("WM_DELETE_WINDOW", recovery_dialog.destroy)
         recovery_dialog.wait_window()
-
-    def connect(self):
+    
+    def connect(self) -> bool:
+        """Подключение к серверу"""
         ip = self.ask_server_ip()
         if not ip:
             return False
@@ -504,10 +521,9 @@ class NetworkManager:
             self.app.settings.username = auth["username"]
             self.app.settings.saved_username = auth["username"]
             self.app.settings.save_config()
-            self.app.root.title(f"💬 Messenger - {auth['nickname']}")
+            self.app.root.title(f"Messenger - {auth['nickname']}")
             self.authenticated = True
-            
-            threading.Thread(target=self.receive_loop, daemon=True).start()
+            self.reconnect_attempts = 0
             
             return True
             
@@ -520,53 +536,133 @@ class NetworkManager:
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось подключиться: {e}")
             return False
-
-    def send_raw(self, message):
+    
+    def reconnect(self) -> bool:
+        """Попытка переподключения"""
+        if self.reconnect_attempts >= self.max_reconnect_attempts:
+            return False
+        
+        self.reconnect_attempts += 1
+        delay = self.reconnect_delay * self.reconnect_attempts
+        
+        if self.app.ui:
+            self.app.ui.add_system_message(f"Попытка переподключения через {delay} сек...")
+        
+        time.sleep(delay)
+        return self.connect()
+    
+    def send_raw(self, message: str):
+        """Отправка сырого сообщения"""
         try:
             if self.sock:
                 self.sock.send((message + "\n").encode('utf-8'))
-        except:
-            pass
-
-    def send(self, message):
+        except (socket.error, BrokenPipeError):
+            self.authenticated = False
+            if self.app.ui:
+                self.app.ui.add_system_message("Соединение потеряно...")
+                self.reconnect()
+        except Exception as e:
+            print(f"Send error: {e}")
+    
+    def send(self, message: str):
+        """Отправка сообщения в текущий чат"""
         if not self.authenticated:
             return
         
         if self.app.ui and self.app.ui.current_chat == "general":
             self.send_raw(message)
-        elif self.app.ui:
+        elif self.app.ui and self.app.ui.current_chat_type == "private":
             self.send_raw(f"CMD:PM|{self.app.ui.current_chat}|{message}")
-
-    def receive_loop(self):
-        while self.authenticated and self.sock:
+        elif self.app.ui and self.app.ui.current_chat_type == "group":
+            self.send_raw(f"CMD:GROUP_MSG|{self.app.ui.current_chat}|{message}")
+    
+    def send_group_message(self, group_name: str, message: str):
+        """Отправка сообщения в группу"""
+        if not self.authenticated:
+            return
+        self.send_raw(f"CMD:GROUP_MSG|{group_name}|{message}")
+    
+    def send_private_message(self, recipient: str, message: str):
+        """Отправка приватного сообщения"""
+        if not self.authenticated:
+            return
+        self.send_raw(f"CMD:PM|{recipient}|{message}")
+    
+    def _start_receive_thread(self):
+        """Запуск потока приёма сообщений"""
+        self._running = True
+        self._receive_thread = threading.Thread(target=self._receive_loop, daemon=True)
+        self._receive_thread.start()
+    
+    def _receive_loop(self):
+        """Основной цикл приёма сообщений"""
+        while self.authenticated and self.sock and self._running:
             try:
+                self.sock.settimeout(1.0)
                 data = self.sock.recv(4096).decode('utf-8', errors='ignore')
                 if not data:
                     break
+                
                 self.buffer += data
                 while '\n' in self.buffer:
                     line, self.buffer = self.buffer.split('\n', 1)
                     if line and self.app.ui:
-                        self.app.root.after(0, lambda l=line: self.process_line(l))
-            except:
+                        self.app.root.after(0, lambda l=line: self._process_line(l))
+                        
+            except socket.timeout:
+                continue
+            except (ConnectionResetError, BrokenPipeError):
+                break
+            except Exception as e:
+                print(f"Receive error: {e}")
                 break
         
         self.authenticated = False
         if self.app.ui:
-            self.app.root.after(0, lambda: self.app.ui.add_system_message("❌ Соединение потеряно"))
-
-    def process_line(self, line):
+            self.app.root.after(0, lambda: self.app.ui.add_system_message("Соединение потеряно"))
+            self.app.root.after(1000, lambda: self.reconnect())
+    
+    def _process_line(self, line: str):
+        """Обработка полученной строки"""
         try:
             if line.startswith("JSON_PAYLOAD:"):
                 payload = line[13:]
                 try:
                     msg = json.loads(payload)
                     if self.app.ui:
-                        self.app.root.after(0, lambda: self.app.ui.handle_server_message(msg))
-                except:
+                        self.app.ui.handle_server_message(msg)
+                except json.JSONDecodeError:
                     pass
             elif line.startswith("MSG:"):
                 if self.app.ui:
-                    self.app.root.after(0, lambda: self.app.ui.add_system_message(line[4:]))
-        except:
-            pass
+                    self.app.ui.add_system_message(line[4:])
+            elif line.startswith("AUTH_FAIL"):
+                if self.app.ui:
+                    self.app.ui.add_system_message(f"Ошибка: {line}")
+            elif line.startswith("BANNED"):
+                if self.app.ui:
+                    self.app.ui.add_system_message("Вы забанены на сервере!")
+                    self.authenticated = False
+        except Exception as e:
+            print(f"Process line error: {e}")
+    
+    def disconnect(self):
+        """Отключение от сервера"""
+        self._running = False
+        self.authenticated = False
+        
+        if self.sock:
+            try:
+                self.send_raw("LOGOUT")
+                self.sock.close()
+            except:
+                pass
+            self.sock = None
+    
+    def is_connected(self) -> bool:
+        """Проверка состояния подключения"""
+        return self.authenticated and self.sock is not None
+    
+    def get_file_port(self) -> int:
+        """Возвращает порт файлового сервера"""
+        return 5556

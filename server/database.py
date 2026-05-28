@@ -3,12 +3,12 @@ import os
 import sqlite3
 from datetime import datetime
 from contextlib import contextmanager
+from typing import Optional, List, Dict, Any
 
 class Database:
     def __init__(self, db_path):
         self.db_path = db_path
         
-        # Создаём папку для БД, если её нет
         db_dir = os.path.dirname(db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
@@ -17,7 +17,6 @@ class Database:
     
     @contextmanager
     def get_connection(self):
-        """Контекстный менеджер для подключения к БД"""
         conn = None
         try:
             conn = sqlite3.connect(self.db_path)
@@ -33,7 +32,6 @@ class Database:
                 conn.close()
     
     def init_db(self):
-        """Инициализация базы данных: создание всех таблиц и индексов"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
@@ -48,11 +46,11 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     last_seen TIMESTAMP,
                     is_online BOOLEAN DEFAULT 0,
-                    avatar_url TEXT
+                    nickname TEXT DEFAULT ''
                 )
             ''')
             
-            # Таблица для общих сообщений (чат-история)
+            # Таблица для общих сообщений
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,11 +70,26 @@ class Database:
                     recipient TEXT NOT NULL,
                     message TEXT NOT NULL,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    is_read BOOLEAN DEFAULT 0
+                    is_read BOOLEAN DEFAULT 0,
+                    delivered_at TIMESTAMP
                 )
             ''')
             
-            # Таблица для забаненных пользователей/IP
+            # Таблица для оффлайн-сообщений
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS offline_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    recipient TEXT NOT NULL,
+                    sender TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_private BOOLEAN DEFAULT 1,
+                    delivered BOOLEAN DEFAULT 0,
+                    delivered_at TIMESTAMP
+                )
+            ''')
+            
+            # Таблица для забаненных
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS banned (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,7 +100,7 @@ class Database:
                 )
             ''')
             
-            # Таблица для сессий (для будущего FastAPI)
+            # Таблица для сессий
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,7 +136,7 @@ class Database:
                 )
             ''')
             
-            # Таблица для сообщений в группах
+            # Таблица для сообщений в группах - ИСПРАВЛЕНО: sender_nickname вместо sender_name
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS group_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -155,61 +168,54 @@ class Database:
                 )
             ''')
             
-            # Создаём индексы для ускорения запросов
             self._create_indexes(cursor)
     
     def _create_indexes(self, cursor):
-        """Создаёт все индексы для ускорения запросов"""
         try:
-            # Индексы для таблицы messages
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender)')
-            
-            # Индексы для таблицы private_messages
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_private_messages_users ON private_messages(sender, recipient)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_private_messages_timestamp ON private_messages(timestamp)')
-            
-            # Индексы для таблицы sessions
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_sessions_username ON sessions(username)')
-            
-            # Индексы для таблицы users
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_online ON users(is_online)')
-            
-            # Индексы для групп
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_group_messages_group ON group_messages(group_id)')
-            
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_offline_messages_recipient ON offline_messages(recipient, delivered)')
         except sqlite3.OperationalError as e:
-            print(f"Предупреждение: не удалось создать некоторые индексы - {e}")
+            print(f"Warning: Could not create some indexes - {e}")
     
-    # === Методы для работы с пользователями ===
+    # === Users ===
     
     def create_user(self, username, password_hash, salt, is_admin=False):
-        """Создаёт нового пользователя"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             try:
                 cursor.execute('''
-                    INSERT INTO users (username, password_hash, salt, is_admin, created_at, last_seen) 
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (username, password_hash, salt, 1 if is_admin else 0, datetime.now(), datetime.now()))
+                    INSERT INTO users (username, password_hash, salt, is_admin, created_at, last_seen, nickname) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (username, password_hash, salt, 1 if is_admin else 0, datetime.now(), datetime.now(), username))
                 return cursor.lastrowid
             except sqlite3.IntegrityError:
                 return None
     
     def get_user(self, username):
-        """Получает информацию о пользователе"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
             row = cursor.fetchone()
             return dict(row) if row else None
     
+    def get_user_by_id(self, user_id):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT id, username, nickname, is_admin, is_online, last_seen FROM users WHERE id = ?', (user_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+    
     def update_last_seen(self, username):
-        """Обновляет время последнего визита"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -217,29 +223,31 @@ class Database:
             ''', (datetime.now(), username))
     
     def set_user_offline(self, username):
-        """Устанавливает статус пользователя 'оффлайн'"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('UPDATE users SET is_online = 0 WHERE username = ?', (username,))
     
     def get_all_users(self):
-        """Возвращает список всех пользователей"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT id, username, password_hash, salt, is_admin, is_online, last_seen FROM users')
+            cursor.execute('SELECT id, username, nickname, is_admin, is_online, last_seen FROM users')
             return [dict(row) for row in cursor.fetchall()]
     
     def demote_admin(self, username):
-        """Забирает права администратора"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('UPDATE users SET is_admin = 0 WHERE username = ?', (username,))
             return cursor.rowcount > 0
     
-    # === Методы для работы с сообщениями ===
+    def update_user_nickname(self, username, new_nickname):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('UPDATE users SET nickname = ? WHERE username = ?', (new_nickname, username))
+            return cursor.rowcount > 0
+    
+    # === Messages ===
     
     def save_message(self, sender, message, is_private=False, recipient=None):
-        """Сохраняет сообщение в историю"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -249,7 +257,6 @@ class Database:
             return cursor.lastrowid
     
     def get_chat_history(self, limit=100):
-        """Получает последние сообщения из общего чата"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -261,18 +268,60 @@ class Database:
             messages = [dict(row) for row in cursor.fetchall()]
             return list(reversed(messages))
     
-    def save_private_message(self, sender, recipient, message):
-        """Сохраняет приватное сообщение"""
+    # === Offline Messages (NEW) ===
+    
+    def save_offline_message(self, recipient, sender, message, is_private=True):
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO private_messages (sender, recipient, message, timestamp) 
-                VALUES (?, ?, ?, ?)
-            ''', (sender, recipient, message, datetime.now()))
+                INSERT INTO offline_messages (recipient, sender, message, is_private, timestamp) 
+                VALUES (?, ?, ?, ?, ?)
+            ''', (recipient, sender, message, is_private, datetime.now()))
+            return cursor.lastrowid
+    
+    def get_offline_messages(self, recipient):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, sender, message, timestamp, is_private 
+                FROM offline_messages 
+                WHERE recipient = ? AND delivered = 0
+                ORDER BY timestamp ASC
+            ''', (recipient,))
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def mark_offline_messages_delivered(self, message_ids):
+        if not message_ids:
+            return 0
+        placeholders = ','.join('?' * len(message_ids))
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(f'''
+                UPDATE offline_messages 
+                SET delivered = 1, delivered_at = ? 
+                WHERE id IN ({placeholders})
+            ''', (datetime.now(), *message_ids))
+            return cursor.rowcount
+    
+    def delete_old_offline_messages(self, days=30):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cutoff = datetime.now().timestamp() - (days * 86400)
+            cursor.execute('DELETE FROM offline_messages WHERE julianday(datetime(timestamp)) < julianday("now", ?)', (f'-{days} days',))
+            return cursor.rowcount
+    
+    # === Private Messages ===
+    
+    def save_private_message(self, sender, recipient, message):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO private_messages (sender, recipient, message, timestamp, delivered_at) 
+                VALUES (?, ?, ?, ?, ?)
+            ''', (sender, recipient, message, datetime.now(), datetime.now()))
             return cursor.lastrowid
     
     def get_private_messages(self, user1, user2, limit=100):
-        """Получает переписку между двумя пользователями"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -283,10 +332,19 @@ class Database:
             ''', (user1, user2, user2, user1, limit))
             return [dict(row) for row in cursor.fetchall()]
     
-    # === Методы для работы с банами ===
+    def mark_private_messages_read(self, sender, recipient):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE private_messages 
+                SET is_read = 1 
+                WHERE sender = ? AND recipient = ? AND is_read = 0
+            ''', (sender, recipient))
+            return cursor.rowcount
+    
+    # === Bans ===
     
     def ban_ip(self, ip_address, reason=None, expires_at=None):
-        """Блокирует IP-адрес"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             try:
@@ -299,7 +357,6 @@ class Database:
                 return False
     
     def is_banned(self, identifier):
-        """Проверяет, заблокирован ли IP/пользователь"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -309,23 +366,20 @@ class Database:
             return cursor.fetchone() is not None
     
     def get_banned_ips(self):
-        """Возвращает список забаненных IP"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT identifier, reason, banned_at, expires_at FROM banned')
             return [dict(row) for row in cursor.fetchall()]
     
     def unban_ip(self, ip_address):
-        """Разблокирует IP-адрес"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM banned WHERE identifier = ?', (ip_address,))
             return cursor.rowcount > 0
     
-    # === Методы для работы с сессиями ===
+    # === Sessions ===
     
     def create_session(self, username, token, ip_address, expires_at):
-        """Создаёт новую сессию"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -335,7 +389,6 @@ class Database:
             return cursor.lastrowid
     
     def get_session(self, token):
-        """Получает сессию по токену"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -345,22 +398,19 @@ class Database:
             return dict(row) if row else None
     
     def delete_session(self, token):
-        """Удаляет сессию (выход)"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM sessions WHERE token = ?', (token,))
     
     def delete_expired_sessions(self):
-        """Удаляет просроченные сессии"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM sessions WHERE expires_at <= ?', (datetime.now(),))
             return cursor.rowcount
     
-    # === Методы для работы с группами ===
+    # === Groups ===
     
     def create_group(self, name, creator_id):
-        """Создаёт новую группу"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             try:
@@ -371,22 +421,25 @@ class Database:
             except sqlite3.IntegrityError:
                 return None
     
+    def rename_group(self, group_id, new_name):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('UPDATE groups SET name = ? WHERE id = ?', (new_name, group_id))
+            return cursor.rowcount > 0
+    
     def add_group_member(self, group_id, user_id):
-        """Добавляет участника в группу"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)', (group_id, user_id))
             return cursor.rowcount > 0
     
     def remove_group_member(self, group_id, user_id):
-        """Удаляет участника из группы"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM group_members WHERE group_id = ? AND user_id = ?', (group_id, user_id))
             return cursor.rowcount > 0
     
     def get_group_by_name(self, name):
-        """Получает группу по названию"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM groups WHERE name = ?', (name,))
@@ -394,7 +447,6 @@ class Database:
             return dict(row) if row else None
     
     def get_group_by_id(self, group_id):
-        """Получает группу по ID"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM groups WHERE id = ?', (group_id,))
@@ -402,7 +454,6 @@ class Database:
             return dict(row) if row else None
     
     def get_group_members(self, group_id):
-        """Получает список участников группы"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -413,12 +464,15 @@ class Database:
             ''', (group_id,))
             return [dict(row) for row in cursor.fetchall()]
     
+    def get_group_member_names(self, group_id):
+        members = self.get_group_members(group_id)
+        return [m.get('nickname', m.get('username', '')) for m in members]
+    
     def get_user_groups(self, user_id):
-        """Получает список групп пользователя"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT g.id, g.name, g.created_at 
+                SELECT g.id, g.name, g.created_at, g.creator_id
                 FROM groups g 
                 JOIN group_members gm ON g.id = gm.group_id 
                 WHERE gm.user_id = ?
@@ -426,7 +480,6 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
     
     def delete_group(self, group_id):
-        """Удаляет группу и все связанные данные"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM group_messages WHERE group_id = ?', (group_id,))
@@ -435,7 +488,6 @@ class Database:
             return True
     
     def save_group_message(self, group_id, sender_id, sender_nickname, message):
-        """Сохраняет сообщение в группе"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -447,19 +499,17 @@ class Database:
     def get_group_messages(self, group_id, limit=100):
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            # Используем sender_name
             cursor.execute('''
-                SELECT sender_name as sender, message, timestamp 
+                SELECT sender_nickname as sender, message, timestamp 
                 FROM group_messages 
                 WHERE group_id = ? 
                 ORDER BY timestamp ASC LIMIT ?
             ''', (group_id, limit))
             return [dict(row) for row in cursor.fetchall()]
     
-    # === Методы для работы с файлами ===
+    # === Files ===
     
     def save_file(self, file_id, name, path, size, sender_id, sender_nickname, chat_type, chat_target, date):
-        """Сохраняет информацию о файле"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -469,7 +519,6 @@ class Database:
             return cursor.lastrowid
     
     def get_file_by_id(self, file_id):
-        """Получает файл по ID"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM files WHERE file_id = ?', (file_id,))
@@ -477,7 +526,6 @@ class Database:
             return dict(row) if row else None
     
     def get_files_by_chat(self, chat_type, chat_target=None):
-        """Получает файлы по типу чата"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             if chat_target:
@@ -497,16 +545,14 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
     
     def delete_file(self, file_id):
-        """Удаляет информацию о файле"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('DELETE FROM files WHERE file_id = ?', (file_id,))
             return cursor.rowcount > 0
     
-    # === Статистика ===
+    # === Stats ===
     
     def get_stats(self):
-        """Возвращает статистику базы данных"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT COUNT(*) as count FROM users')
@@ -519,11 +565,58 @@ class Database:
             groups_count = cursor.fetchone()['count']
             cursor.execute('SELECT COUNT(*) as count FROM files')
             files_count = cursor.fetchone()['count']
+            cursor.execute('SELECT COUNT(*) as count FROM offline_messages WHERE delivered = 0')
+            offline_count = cursor.fetchone()['count']
             
             return {
                 'users': users_count,
                 'messages': messages_count,
                 'private_messages': private_count,
                 'groups': groups_count,
-                'files': files_count
+                'files': files_count,
+                'offline_messages': offline_count
             }
+    
+    # === Friends ===
+    
+    def add_friend(self, user_id, friend_id):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS friends (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    friend_id INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT DEFAULT 'pending',
+                    UNIQUE(user_id, friend_id),
+                    FOREIGN KEY (user_id) REFERENCES users(id),
+                    FOREIGN KEY (friend_id) REFERENCES users(id)
+                )
+            ''')
+            try:
+                cursor.execute('INSERT INTO friends (user_id, friend_id) VALUES (?, ?)', (user_id, friend_id))
+                return True
+            except sqlite3.IntegrityError:
+                return False
+    
+    def get_friends(self, user_id):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS friends (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    friend_id INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT DEFAULT 'accepted',
+                    UNIQUE(user_id, friend_id)
+                )
+            ''')
+            cursor.execute('''
+                SELECT u.username, u.nickname 
+                FROM friends f 
+                JOIN users u ON f.friend_id = u.id 
+                WHERE f.user_id = ? AND f.status = 'accepted'
+            ''', (user_id,))
+            return [dict(row) for row in cursor.fetchall()]

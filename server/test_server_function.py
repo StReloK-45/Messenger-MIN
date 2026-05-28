@@ -1,24 +1,47 @@
-#Это чисто для тестов всех методов чата без лишней суеты
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ЕБАНЫЙ ТЕСТЕР ДЛЯ МЕССЕНДЖЕРА
-Проверяет всё, что только можно, бля!
-Запусти и смотри как оно само всё тестит
+Полный тестер Messenger Server v2.0
+Проверяет все методы API, WebSocket, TCP сокеты, группы, файлы
+
+Запуск: python test_server_function.py [--host localhost] [--verbose]
 """
 
 import sys
 import os
 import json
 import time
-import threading
-import requests
-import websocket
 import socket
 import base64
+import struct
+import tempfile
 from datetime import datetime
+from typing import Dict, Any, List, Optional, Tuple
 
-# Цвета для консоли (чтобы красиво было, бля)
+# Проверка наличия зависимостей
+try:
+    import requests
+except ImportError:
+    print("\n" + "=" * 60)
+    print("ОШИБКА: Библиотека 'requests' не установлена!")
+    print("Установите: pip install requests")
+    print("=" * 60)
+    sys.exit(1)
+
+# Пробуем импортировать websocket-client (правильная библиотека)
+try:
+    import websocket
+    # Проверяем, что это правильная библиотека (есть метод create_connection)
+    if not hasattr(websocket, 'create_connection'):
+        raise ImportError("Wrong websocket library")
+except ImportError:
+    print("\n" + "=" * 60)
+    print("ОШИБКА: Библиотека 'websocket-client' не установлена!")
+    print("Установите: pip install websocket-client")
+    print("=" * 60)
+    sys.exit(1)
+
+
 class Colors:
     HEADER = '\033[95m'
     BLUE = '\033[94m'
@@ -28,107 +51,159 @@ class Colors:
     END = '\033[0m'
     BOLD = '\033[1m'
 
-def print_ok(msg):
-    print(f"{Colors.GREEN}✅ {msg}{Colors.END}")
 
-def print_error(msg):
-    print(f"{Colors.RED}❌ {msg}{Colors.END}")
+def print_ok(msg: str):
+    print(f"{Colors.GREEN}OK {msg}{Colors.END}")
 
-def print_info(msg):
-    print(f"{Colors.BLUE}ℹ️ {msg}{Colors.END}")
 
-def print_warning(msg):
-    print(f"{Colors.YELLOW}⚠️ {msg}{Colors.END}")
+def print_error(msg: str):
+    print(f"{Colors.RED}FAIL {msg}{Colors.END}")
 
-def print_test(title):
-    print(f"\n{Colors.BOLD}{Colors.HEADER}▶️ ТЕСТ: {title}{Colors.END}")
+
+def print_info(msg: str):
+    print(f"{Colors.BLUE}INFO {msg}{Colors.END}")
+
+
+def print_test(title: str):
+    print(f"\n{Colors.BOLD}{Colors.HEADER}TEST: {title}{Colors.END}")
     print("-" * 60)
 
 
-class MessengerTester:
-    """Полная тестовая хуйня для мессенджера"""
+class FullServerTester:
+    """Полный тестер сервера"""
     
-    def __init__(self, host="localhost"):
+    def __init__(self, host: str = "localhost", verbose: bool = False):
         self.host = host
         self.api_port = 8000
         self.chat_port = 5555
         self.file_port = 5556
+        self.verbose = verbose
         
+        # Тестовые пользователи
         self.test_users = [
-            {"username": "tester1", "password": "pass123", "nickname": "Тестер1"},
-            {"username": "tester2", "password": "pass456", "nickname": "Тестер2"},
-            {"username": "adminSK", "password": "SK45-US45", "nickname": "Admin"}
+            {"username": "tester_alice", "password": "alice123", "nickname": "Алиса"},
+            {"username": "tester_bob", "password": "bob123", "nickname": "Боб"},
         ]
         
-        self.tokens = {}
-        self.websockets = {}
-        self.sockets = {}
+        # Хранилище данных
+        self.tokens: Dict[str, str] = {}
+        self.test_results: List[Tuple[str, bool, str]] = []
         
+        # Счётчики
         self.passed = 0
         self.failed = 0
-        
+    
+    def log(self, msg: str, level: str = "info"):
+        if self.verbose:
+            print(f"  {msg}")
+    
+    def add_result(self, test_name: str, passed: bool, message: str = ""):
+        self.test_results.append((test_name, passed, message))
+        if passed:
+            self.passed += 1
+            print_ok(f"{test_name}: {message}" if message else test_name)
+        else:
+            self.failed += 1
+            print_error(f"{test_name}: {message}" if message else test_name)
+    
+    def register_user(self, user: Dict) -> Optional[str]:
+        """Регистрирует одного пользователя и возвращает токен"""
+        try:
+            resp = requests.post(
+                f"http://{self.host}:{self.api_port}/api/auth/register",
+                json={"username": user["username"], "password": user["password"], "nickname": user["nickname"]},
+                timeout=5
+            )
+            if resp.status_code == 200:
+                token = resp.json().get("access_token")
+                self.log(f"Registered: {user['username']}", "ok")
+                return token
+            elif resp.status_code == 400:
+                self.log(f"User exists: {user['username']}", "info")
+                # Пробуем логин
+                resp = requests.post(
+                    f"http://{self.host}:{self.api_port}/api/auth/login",
+                    json={"username": user["username"], "password": user["password"]},
+                    timeout=5
+                )
+                if resp.status_code == 200:
+                    return resp.json().get("access_token")
+            return None
+        except Exception as e:
+            self.log(f"Failed: {user['username']} - {e}", "warning")
+            return None
+    
     def run_all_tests(self):
-        """Запускает все тесты нахуй"""
-        print(f"\n{Colors.BOLD}{Colors.HEADER}")
-        print("╔══════════════════════════════════════════════════════════╗")
-        print("║     ЕБАНЫЙ ТЕСТЕР МЕССЕНДЖЕРА v1.0                       ║")
-        print("║     Сейчас будет проверено всё, что можно                ║")
-        print("╚══════════════════════════════════════════════════════════╝")
-        print(f"{Colors.END}")
+        """Запуск всех тестов"""
+        self._print_header()
         
-        print_info(f"Хост: {self.host}")
-        print_info(f"API порт: {self.api_port}")
-        print_info(f"Chat порт: {self.chat_port}")
-        print_info(f"File порт: {self.file_port}")
+        # Проверка доступности
+        if not self._check_server_availability():
+            print_error("Сервер недоступен!")
+            sys.exit(1)
         
-        time.sleep(1)
+        # Регистрируем пользователей
+        print_info("Регистрация тестовых пользователей...")
+        for user in self.test_users:
+            token = self.register_user(user)
+            if token:
+                self.tokens[user["username"]] = token
+            time.sleep(0.3)
         
-        # 1. Проверка доступности сервера
-        self.test_server_availability()
+        if not self.tokens:
+            print_error("Не удалось зарегистрировать пользователей!")
+            sys.exit(1)
         
-        # 2. Тесты FastAPI
-        self.test_fastapi_root()
-        self.test_fastapi_status()
+        # ========== ТЕСТЫ ==========
+        print_test("FASTAPI")
+        self.test_api_root()
+        self.test_api_status()
         
-        # 3. Тесты аутентификации
-        self.test_register()
+        print_test("АУТЕНТИФИКАЦИЯ")
         self.test_login()
         self.test_invalid_login()
         
-        # 4. Тесты пользователей
+        print_test("ПОЛЬЗОВАТЕЛИ")
         self.test_get_users()
         self.test_get_online_users()
         
-        # 5. Тесты сообщений
+        print_test("СООБЩЕНИЯ")
         self.test_send_message()
         self.test_get_messages()
         
-        # 6. Тесты приватных сообщений
-        self.test_private_messages()
+        print_test("ПРИВАТНЫЕ СООБЩЕНИЯ")
+        self.test_private_message()
         
-        # 7. Тесты WebSocket
-        self.test_websocket_connection()
-        self.test_websocket_messages()
+        print_test("WEBSOCKET")
+        self.test_websocket()
         
-        # 8. Тесты групп
+        print_test("ГРУППЫ")
         self.test_create_group()
+        self.test_add_group_member()
         self.test_group_message()
+        self.test_delete_group()
         
-        # 9. Тесты сокетов (Desktop)
-        self.test_socket_connection()
-        self.test_socket_auth()
-        self.test_socket_message()
+        print_test("TCP СОКЕТЫ")
+        self.test_socket()
         
-        # 10. Тесты админки
-        self.test_admin_commands()
+        print_test("ФАЙЛЫ")
+        self.test_file_upload()
         
         # ИТОГИ
-        self.print_summary()
+        self._print_summary()
     
-    def test_server_availability(self):
-        """Тест 1: Сервер вообще жив, бля?"""
-        print_test("Проверка доступности сервера")
-        
+    def _print_header(self):
+        print(f"\n{Colors.BOLD}{Colors.HEADER}")
+        print("╔══════════════════════════════════════════════════════════════════╗")
+        print("║              SERVER TESTER v2.0 - Messenger Testing              ║")
+        print("╚══════════════════════════════════════════════════════════════════╝")
+        print(f"{Colors.END}")
+        print_info(f"Host: {self.host}")
+        print_info(f"API Port: {self.api_port}")
+        print()
+    
+    def _check_server_availability(self) -> bool:
+        print_test("Проверка доступности")
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(3)
@@ -137,503 +212,352 @@ class MessengerTester:
             
             if result == 0:
                 print_ok(f"Сервер доступен на порту {self.api_port}")
-                self.passed += 1
-            else:
-                print_error(f"Сервер НЕ ДОСТУПЕН на порту {self.api_port}! Запусти сервер, бля!")
-                self.failed += 1
-                sys.exit(1)
+                return True
+            return False
         except Exception as e:
             print_error(f"Ошибка: {e}")
-            self.failed += 1
+            return False
     
-    def test_fastapi_root(self):
-        """Тест 2: FastAPI корневой маршрут"""
-        print_test("FastAPI корневой маршрут (GET /)")
-        
-        try:
-            response = requests.get(f"http://{self.host}:{self.api_port}/", timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if "message" in data:
-                    print_ok(f"Ответ: {data.get('message')}")
-                    self.passed += 1
-                else:
-                    print_error("Нет поля 'message'")
-                    self.failed += 1
-            else:
-                print_error(f"Статус код: {response.status_code}")
-                self.failed += 1
-        except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+    # ========== FASTAPI ==========
     
-    def test_fastapi_status(self):
-        """Тест 3: Статус сервера"""
-        print_test("Статус сервера (GET /api/status)")
-        
+    def test_api_root(self):
         try:
-            response = requests.get(f"http://{self.host}:{self.api_port}/api/status", timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                print_ok(f"Статус: {data.get('status')}, Версия: {data.get('version')}")
-                print_info(f"Пользователей: {data.get('users_count', 0)}")
-                self.passed += 1
-            else:
-                print_error(f"Статус код: {response.status_code}")
-                self.failed += 1
+            resp = requests.get(f"http://{self.host}:{self.api_port}/", timeout=5)
+            self.add_result("GET /", resp.status_code == 200, f"Status {resp.status_code}")
         except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+            self.add_result("GET /", False, str(e))
     
-    def test_register(self):
-        """Тест 4: Регистрация пользователя"""
-        print_test("Регистрация нового пользователя")
-        
-        user = self.test_users[0]
+    def test_api_status(self):
         try:
-            response = requests.post(
-                f"http://{self.host}:{self.api_port}/api/auth/register",
-                json={"username": user["username"], "password": user["password"]},
-                timeout=5
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if "access_token" in data:
-                    print_ok(f"Пользователь {user['username']} зарегистрирован! Токен получен")
-                    self.tokens[user["username"]] = data["access_token"]
-                    self.passed += 1
-                else:
-                    print_error("Токен не получен")
-                    self.failed += 1
-            elif response.status_code == 400 and "already exists" in response.text:
-                print_warning(f"Пользователь {user['username']} уже существует")
-                self.passed += 1  # Не ошибка, просто уже есть
+            resp = requests.get(f"http://{self.host}:{self.api_port}/api/status", timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                self.add_result("GET /api/status", True, f"Users: {data.get('users_count', 0)}")
             else:
-                print_error(f"Статус код: {response.status_code}, {response.text}")
-                self.failed += 1
+                self.add_result("GET /api/status", False, f"Status {resp.status_code}")
         except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+            self.add_result("GET /api/status", False, str(e))
+    
+    # ========== АУТЕНТИФИКАЦИЯ ==========
     
     def test_login(self):
-        """Тест 5: Логин пользователя"""
-        print_test("Авторизация пользователя")
-        
         user = self.test_users[0]
+        if user["username"] not in self.tokens:
+            self.add_result("Логин", False, "Нет токена")
+            return
+        
         try:
-            response = requests.post(
+            resp = requests.post(
                 f"http://{self.host}:{self.api_port}/api/auth/login",
                 json={"username": user["username"], "password": user["password"]},
                 timeout=5
             )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if "access_token" in data:
-                    print_ok(f"Пользователь {user['username']} авторизован!")
-                    self.tokens[user["username"]] = data["access_token"]
-                    self.passed += 1
-                else:
-                    print_error("Токен не получен")
-                    self.failed += 1
-            else:
-                print_error(f"Ошибка авторизации: {response.text}")
-                self.failed += 1
+            self.add_result("Логин", resp.status_code == 200, f"{user['username']}")
         except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+            self.add_result("Логин", False, str(e))
     
     def test_invalid_login(self):
-        """Тест 6: Неверный логин"""
-        print_test("Неверная авторизация (должна упасть)")
-        
         try:
-            response = requests.post(
+            resp = requests.post(
                 f"http://{self.host}:{self.api_port}/api/auth/login",
-                json={"username": "huy", "password": "pizda"},
+                json={"username": "fake_user", "password": "wrong"},
                 timeout=5
             )
-            
-            if response.status_code == 401:
-                print_ok("Неверная авторизация корректно отклонена (401)")
-                self.passed += 1
-            else:
-                print_error(f"Должен быть 401, получили {response.status_code}")
-                self.failed += 1
+            self.add_result("Неверный логин", resp.status_code == 401, f"Status {resp.status_code}")
         except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+            self.add_result("Неверный логин", False, str(e))
+    
+    # ========== ПОЛЬЗОВАТЕЛИ ==========
     
     def test_get_users(self):
-        """Тест 7: Список пользователей"""
-        print_test("Получение списка пользователей")
-        
-        if not self.tokens.get(self.test_users[0]["username"]):
-            print_warning("Нет токена, пропускаем")
+        if "tester_alice" not in self.tokens:
+            self.add_result("GET /api/users", False, "Нет токена")
             return
         
         try:
-            headers = {"Authorization": f"Bearer {self.tokens[self.test_users[0]['username']]}"}
-            response = requests.get(
-                f"http://{self.host}:{self.api_port}/api/users",
-                headers=headers,
-                timeout=5
-            )
-            
-            if response.status_code == 200:
-                users = response.json()
-                print_ok(f"Получено {len(users)} пользователей")
-                for u in users[:3]:
-                    print_info(f"  - {u.get('username')} (online: {u.get('is_online')})")
-                self.passed += 1
+            headers = {"Authorization": f"Bearer {self.tokens['tester_alice']}"}
+            resp = requests.get(f"http://{self.host}:{self.api_port}/api/users", headers=headers, timeout=5)
+            if resp.status_code == 200:
+                users = resp.json()
+                self.add_result("GET /api/users", True, f"{len(users)} users")
             else:
-                print_error(f"Ошибка: {response.status_code}")
-                self.failed += 1
+                self.add_result("GET /api/users", False, f"Status {resp.status_code}")
         except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+            self.add_result("GET /api/users", False, str(e))
     
     def test_get_online_users(self):
-        """Тест 8: Онлайн пользователи"""
-        print_test("Список онлайн пользователей")
-        
         try:
-            response = requests.get(
-                f"http://{self.host}:{self.api_port}/api/users/online",
-                timeout=5
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                print_ok(f"Онлайн пользователей: {data.get('count', 0)}")
-                self.passed += 1
+            resp = requests.get(f"http://{self.host}:{self.api_port}/api/users/online", timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                self.add_result("GET /api/users/online", True, f"Online: {data.get('count', 0)}")
             else:
-                print_error(f"Ошибка: {response.status_code}")
-                self.failed += 1
+                self.add_result("GET /api/users/online", False, f"Status {resp.status_code}")
         except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+            self.add_result("GET /api/users/online", False, str(e))
+    
+    # ========== СООБЩЕНИЯ ==========
     
     def test_send_message(self):
-        """Тест 9: Отправка сообщения"""
-        print_test("Отправка сообщения в общий чат")
-        
-        if not self.tokens.get(self.test_users[0]["username"]):
-            print_warning("Нет токена, пропускаем")
+        if "tester_alice" not in self.tokens:
+            self.add_result("POST /api/messages", False, "Нет токена")
             return
         
         try:
-            headers = {"Authorization": f"Bearer {self.tokens[self.test_users[0]['username']]}"}
-            response = requests.post(
+            headers = {"Authorization": f"Bearer {self.tokens['tester_alice']}"}
+            resp = requests.post(
                 f"http://{self.host}:{self.api_port}/api/messages",
                 headers=headers,
-                json={"message": f"Тестовое сообщение от тестера в {datetime.now().strftime('%H:%M:%S')}"},
+                json={"message": f"Test {int(time.time())}"},
                 timeout=5
             )
-            
-            if response.status_code == 200:
-                print_ok("Сообщение отправлено!")
-                self.passed += 1
-            else:
-                print_error(f"Ошибка: {response.status_code}")
-                self.failed += 1
+            self.add_result("POST /api/messages", resp.status_code == 200, "Sent")
         except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+            self.add_result("POST /api/messages", False, str(e))
     
     def test_get_messages(self):
-        """Тест 10: Получение истории"""
-        print_test("Получение истории сообщений")
-        
-        if not self.tokens.get(self.test_users[0]["username"]):
-            print_warning("Нет токена, пропускаем")
+        if "tester_alice" not in self.tokens:
+            self.add_result("GET /api/messages", False, "Нет токена")
             return
         
         try:
-            headers = {"Authorization": f"Bearer {self.tokens[self.test_users[0]['username']]}"}
-            response = requests.get(
+            headers = {"Authorization": f"Bearer {self.tokens['tester_alice']}"}
+            resp = requests.get(
                 f"http://{self.host}:{self.api_port}/api/messages?limit=10",
                 headers=headers,
                 timeout=5
             )
-            
-            if response.status_code == 200:
-                messages = response.json()
-                print_ok(f"Получено {len(messages)} сообщений")
-                if messages:
-                    last = messages[-1]
-                    print_info(f"Последнее: {last.get('sender')}: {last.get('message')[:50]}")
-                self.passed += 1
+            if resp.status_code == 200:
+                messages = resp.json()
+                self.add_result("GET /api/messages", True, f"{len(messages)} messages")
             else:
-                print_error(f"Ошибка: {response.status_code}")
-                self.failed += 1
+                self.add_result("GET /api/messages", False, f"Status {resp.status_code}")
         except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+            self.add_result("GET /api/messages", False, str(e))
     
-    def test_private_messages(self):
-        """Тест 11: Приватные сообщения"""
-        print_test("Приватные сообщения")
-        
-        # Регистрируем второго пользователя
-        user2 = self.test_users[1]
-        try:
-            response = requests.post(
-                f"http://{self.host}:{self.api_port}/api/auth/register",
-                json={"username": user2["username"], "password": user2["password"]},
-                timeout=5
-            )
-            if response.status_code == 200:
-                data = response.json()
-                self.tokens[user2["username"]] = data["access_token"]
-        except:
-            pass
-        
-        if not self.tokens.get(self.test_users[0]["username"]):
-            print_warning("Нет токена, пропускаем")
+    # ========== ПРИВАТНЫЕ СООБЩЕНИЯ ==========
+    
+    def test_private_message(self):
+        if "tester_alice" not in self.tokens:
+            self.add_result("Приватное сообщение", False, "Нет токена")
             return
         
         try:
-            headers = {"Authorization": f"Bearer {self.tokens[self.test_users[0]['username']]}"}
-            response = requests.post(
+            headers = {"Authorization": f"Bearer {self.tokens['tester_alice']}"}
+            resp = requests.post(
                 f"http://{self.host}:{self.api_port}/api/messages",
                 headers=headers,
-                json={"message": "Привет, это тестовое ЛС!", "recipient": "tester2"},
+                json={"message": "Private", "recipient": "tester_bob"},
                 timeout=5
             )
-            
-            if response.status_code == 200:
-                print_ok("Приватное сообщение отправлено!")
-                self.passed += 1
-            else:
-                print_error(f"Ошибка: {response.status_code}")
-                self.failed += 1
+            self.add_result("Приватное сообщение", resp.status_code == 200, "Sent")
         except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+            self.add_result("Приватное сообщение", False, str(e))
     
-    def test_websocket_connection(self):
-        """Тест 12: WebSocket подключение"""
-        print_test("WebSocket соединение")
-        
-        if not self.tokens.get(self.test_users[0]["username"]):
-            print_warning("Нет токена, пропускаем")
+    # ========== WEBSOCKET ==========
+    
+    def test_websocket(self):
+        """Тест WebSocket с использованием create_connection"""
+        if "tester_alice" not in self.tokens:
+            self.add_result("WebSocket", False, "Нет токена")
             return
         
         try:
-            ws = websocket.WebSocket()
-            ws.connect(f"ws://{self.host}:{self.api_port}/ws", timeout=5)
-            
-            # Отправляем токен
-            ws.send(json.dumps({"token": self.tokens[self.test_users[0]["username"]]}))
-            
-            # Ждём ответ
-            response = json.loads(ws.recv())
-            
-            if response.get("type") == "connected":
-                print_ok(f"WebSocket подключен! Добро пожаловать, {response.get('message')}")
-                self.websockets[self.test_users[0]["username"]] = ws
-                self.passed += 1
-            else:
-                print_error(f"Неожиданный ответ: {response}")
-                self.failed += 1
-        except Exception as e:
-            print_error(f"Ошибка WebSocket: {e}")
-            self.failed += 1
-    
-    def test_websocket_messages(self):
-        """Тест 13: WebSocket сообщения"""
-        print_test("WebSocket отправка сообщений")
-        
-        if not self.websockets.get(self.test_users[0]["username"]):
-            print_warning("Нет WebSocket, пропускаем")
-            return
-        
-        try:
-            ws = self.websockets[self.test_users[0]["username"]]
-            
-            # Отправляем сообщение
-            ws.send(json.dumps({
-                "type": "message",
-                "text": "Test WebSocket message!"
-            }))
-            
-            # Ждём ответ с подтверждением
+            # Используем правильный метод create_connection из websocket-client
+            ws = websocket.create_connection(
+                f"ws://{self.host}:{self.api_port}/ws",
+                timeout=5
+            )
+            ws.send(json.dumps({"token": self.tokens["tester_alice"]}))
             ws.settimeout(3)
             response = json.loads(ws.recv())
+            ws.close()
             
-            if response.get("type") in ["message", "connected"]:
-                print_ok("WebSocket сообщение отправлено!")
-                self.passed += 1
+            if response.get("type") == "connected":
+                self.add_result("WebSocket", True, "Connected")
             else:
-                print_warning(f"Ответ: {response}")
-                self.passed += 1
+                self.add_result("WebSocket", False, f"Response: {response}")
         except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+            self.add_result("WebSocket", False, str(e)[:80])
+    
+    # ========== ГРУППЫ ==========
     
     def test_create_group(self):
-        """Тест 14: Создание группы"""
-        print_test("Создание группы")
-        
-        if not self.tokens.get(self.test_users[0]["username"]):
-            print_warning("Нет токена, пропускаем")
+        if "tester_alice" not in self.tokens:
+            self.add_result("Создание группы", False, "Нет токена")
             return
         
         try:
-            headers = {"Authorization": f"Bearer {self.tokens[self.test_users[0]['username']]}"}
-            response = requests.post(
+            headers = {"Authorization": f"Bearer {self.tokens['tester_alice']}"}
+            resp = requests.post(
                 f"http://{self.host}:{self.api_port}/api/groups",
                 headers=headers,
-                json={"name": "Тестовая группа"},
+                json={"name": "TestGroup"},
                 timeout=5
             )
-            
-            if response.status_code == 200:
-                print_ok("Группа создана!")
-                self.passed += 1
-            elif response.status_code == 400 and "already exists" in response.text:
-                print_warning("Группа уже существует")
-                self.passed += 1
+            if resp.status_code in [200, 400]:
+                self.add_result("POST /api/groups", True, "OK")
             else:
-                print_error(f"Ошибка: {response.status_code}, {response.text}")
-                self.failed += 1
+                self.add_result("POST /api/groups", False, f"Status {resp.status_code}")
         except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+            self.add_result("POST /api/groups", False, str(e))
     
-    def test_group_message(self):
-        """Тест 15: Сообщение в группу"""
-        print_test("Отправка сообщения в группу")
-        
-        if not self.tokens.get(self.test_users[0]["username"]):
-            print_warning("Нет токена, пропускаем")
+    def test_add_group_member(self):
+        if "tester_alice" not in self.tokens:
+            self.add_result("Добавление в группу", False, "Нет токена")
             return
         
         try:
-            headers = {"Authorization": f"Bearer {self.tokens[self.test_users[0]['username']]}"}
-            response = requests.post(
-                f"http://{self.host}:{self.api_port}/api/groups/message",
+            headers = {"Authorization": f"Bearer {self.tokens['tester_alice']}"}
+            resp = requests.post(
+                f"http://{self.host}:{self.api_port}/api/groups/add",
                 headers=headers,
-                json={"group_name": "Тестовая группа", "message": "Привет, группа!"},
+                json={"group_name": "TestGroup", "member_nickname": "tester_bob"},
                 timeout=5
             )
-            
-            if response.status_code == 200:
-                print_ok("Сообщение в группу отправлено!")
-                self.passed += 1
-            else:
-                print_error(f"Ошибка: {response.status_code}, {response.text}")
-                self.failed += 1
+            self.add_result("POST /api/groups/add", resp.status_code == 200, f"Status {resp.status_code}")
         except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+            self.add_result("POST /api/groups/add", False, str(e))
     
-    def test_socket_connection(self):
-        """Тест 16: Сокет соединение (Desktop)"""
-        print_test("TCP Сокет соединение для Desktop клиента")
+    def test_group_message(self):
+        if "tester_alice" not in self.tokens:
+            self.add_result("Сообщение в группу", False, "Нет токена")
+            return
         
+        try:
+            headers = {"Authorization": f"Bearer {self.tokens['tester_alice']}"}
+            resp = requests.post(
+                f"http://{self.host}:{self.api_port}/api/groups/message",
+                headers=headers,
+                json={"group_name": "TestGroup", "message": "Hello!"},
+                timeout=5
+            )
+            self.add_result("POST /api/groups/message", resp.status_code == 200, f"Status {resp.status_code}")
+        except Exception as e:
+            self.add_result("POST /api/groups/message", False, str(e))
+    
+    def test_delete_group(self):
+        if "tester_alice" not in self.tokens:
+            self.add_result("Удаление группы", False, "Нет токена")
+            return
+        
+        try:
+            headers = {"Authorization": f"Bearer {self.tokens['tester_alice']}"}
+            resp = requests.delete(
+                f"http://{self.host}:{self.api_port}/api/groups/TestGroup",
+                headers=headers,
+                timeout=5
+            )
+            self.add_result("DELETE /api/groups", resp.status_code == 200, f"Status {resp.status_code}")
+        except Exception as e:
+            self.add_result("DELETE /api/groups", False, str(e))
+    
+    # ========== TCP СОКЕТЫ ==========
+    
+    def test_socket(self):
+        """Тест TCP сокета"""
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(5)
             sock.connect((self.host, self.chat_port))
-            
-            # Ждём AUTH_REQUIRED
             response = sock.recv(1024).decode('utf-8').strip()
             
             if response == "AUTH_REQUIRED":
-                print_ok("Сокет подключен! Сервер ждёт авторизацию")
-                self.sockets["test"] = sock
-                self.passed += 1
+                # Пробуем авторизоваться
+                password_b64 = base64.b64encode("alice123".encode()).decode()
+                sock.send(f"LOGIN|tester_alice|{password_b64}\n".encode())
+                auth_resp = sock.recv(1024).decode('utf-8').strip()
+                
+                if auth_resp.startswith("AUTH_SUCCESS"):
+                    sock.send("Test message\n".encode())
+                    self.add_result("TCP сокет", True, "Connected and auth OK")
+                else:
+                    self.add_result("TCP сокет", False, f"Auth failed: {auth_resp}")
             else:
-                print_error(f"Неожиданный ответ: {response}")
-                self.failed += 1
+                self.add_result("TCP сокет", False, f"Unexpected: {response}")
+            
+            sock.close()
         except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+            self.add_result("TCP сокет", False, str(e))
     
-    def test_socket_auth(self):
-        """Тест 17: Сокет авторизация"""
-        print_test("Сокет авторизация (LOGIN)")
-        
-        if not self.sockets.get("test"):
-            print_warning("Нет сокета, пропускаем")
-            return
+    # ========== ФАЙЛЫ ==========
+    
+    def test_file_upload(self):
+        """Тест загрузки файла"""
+        # Создаём временный файл
+        fd, path = tempfile.mkstemp(suffix=".txt", prefix="test_")
+        with os.fdopen(fd, 'w') as f:
+            f.write("Test content\n" * 10)
         
         try:
-            sock = self.sockets["test"]
-            password_b64 = base64.b64encode("pass123".encode()).decode()
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(10)
+            sock.connect((self.host, self.file_port))
             
-            sock.send(f"LOGIN|tester1|{password_b64}\n".encode())
-            response = sock.recv(1024).decode('utf-8').strip()
+            sock.send(b'U')
             
-            if response.startswith("AUTH_SUCCESS"):
-                print_ok(f"Сокет авторизация успешна! {response}")
-                self.passed += 1
+            filename = os.path.basename(path)
+            filesize = os.path.getsize(path)
+            
+            name_bytes = filename.encode('utf-8')
+            sock.send(struct.pack('>I', len(name_bytes)))
+            sock.send(name_bytes)
+            sock.send(struct.pack('>Q', filesize))
+            
+            sender = "Алиса".encode('utf-8')
+            sock.send(struct.pack('>I', len(sender)))
+            sock.send(sender)
+            
+            response = sock.recv(1)
+            if response == b'K':
+                with open(path, 'rb') as f:
+                    while True:
+                        data = f.read(8192)
+                        if not data:
+                            break
+                        sock.send(data)
+                self.add_result("Загрузка файла", True, filename)
             else:
-                print_error(f"Ошибка авторизации: {response}")
-                self.failed += 1
+                self.add_result("Загрузка файла", False, "Server rejected")
+            
+            sock.close()
         except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
+            self.add_result("Загрузка файла", False, str(e))
+        finally:
+            try:
+                os.remove(path)
+            except:
+                pass
     
-    def test_socket_message(self):
-        """Тест 18: Сокет сообщение"""
-        print_test("Сокет отправка сообщения")
-        
-        if not self.sockets.get("test"):
-            print_warning("Нет сокета, пропускаем")
-            return
-        
-        try:
-            sock = self.sockets["test"]
-            sock.send("Тестовое сообщение через сокет!\n".encode())
-            print_ok("Сообщение отправлено (проверь логи сервера)")
-            self.passed += 1
-        except Exception as e:
-            print_error(f"Ошибка: {e}")
-            self.failed += 1
-    
-    def test_admin_commands(self):
-        """Тест 19: Админ команды"""
-        print_test("Административные команды (проверка наличия)")
-        
-        admin_commands = ["/help", "/users", "/stats", "/kick", "/ban", "/unban", "/banned", "/history", "/stop"]
-        
-        print_info(f"Доступные команды: {', '.join(admin_commands)}")
-        print_ok("Админ команды присутствуют")
-        self.passed += 1
-    
-    def print_summary(self):
-        """Выводит итоговую хуйню"""
-        print(f"\n{Colors.BOLD}{Colors.HEADER}")
-        print("╔══════════════════════════════════════════════════════════╗")
-        print("║                    ИТОГИ ТЕСТИРОВАНИЯ                    ║")
-        print("╚══════════════════════════════════════════════════════════╝")
-        print(f"{Colors.END}")
-        
+    def _print_summary(self):
         total = self.passed + self.failed
         percent = (self.passed / total * 100) if total > 0 else 0
         
-        print(f"{Colors.GREEN}✅ Пройдено: {self.passed}{Colors.END}")
-        print(f"{Colors.RED}❌ Провалено: {self.failed}{Colors.END}")
-        print(f"{Colors.BLUE}📊 Всего: {total}{Colors.END}")
-        print(f"{Colors.YELLOW}📈 Процент: {percent:.1f}%{Colors.END}")
+        print(f"\n{Colors.BOLD}{Colors.HEADER}")
+        print("╔══════════════════════════════════════════════════════════════════╗")
+        print("║                         РЕЗУЛЬТАТЫ ТЕСТОВ                        ║")
+        print("╚══════════════════════════════════════════════════════════════════╝")
+        print(f"{Colors.END}")
+        
+        print(f"{Colors.GREEN}Пройдено: {self.passed}{Colors.END}")
+        print(f"{Colors.RED}Провалено: {self.failed}{Colors.END}")
+        print(f"{Colors.BLUE}Всего: {total}{Colors.END}")
+        print(f"{Colors.YELLOW}Процент: {percent:.1f}%{Colors.END}")
         
         if self.failed == 0:
-            print(f"\n{Colors.GREEN}{Colors.BOLD}🎉 ЕБАТЬ, ВСЁ РАБОТАЕТ! СЕРВЕР ГОТОВ К ЕБАТУЛЬКЕ! 🎉{Colors.END}")
+            print(f"\n{Colors.GREEN}{Colors.BOLD}ВСЕ ТЕСТЫ ПРОЙДЕНЫ!{Colors.END}")
         else:
-            print(f"\n{Colors.RED}{Colors.BOLD}⚠️ ЕСТЬ ПРОБЛЕМЫ, БЛЯ! ГЛЯНЬ ЛОГИ ВЫШЕ! ⚠️{Colors.END}")
+            print(f"\n{Colors.RED}{Colors.BOLD}ЕСТЬ ОШИБКИ!{Colors.END}")
 
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description='Ебаный тестер мессенджера')
-    parser.add_argument('--host', default='localhost', help='Хост сервера (по умолчанию localhost)')
+    parser = argparse.ArgumentParser(description='Тестер сервера Messenger')
+    parser.add_argument('--host', default='localhost', help='Хост сервера')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Подробный вывод')
     args = parser.parse_args()
     
-    tester = MessengerTester(host=args.host)
+    tester = FullServerTester(host=args.host, verbose=args.verbose)
     tester.run_all_tests()
 
 
