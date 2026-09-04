@@ -5,7 +5,6 @@ import json
 import threading
 import time
 from datetime import datetime
-from logger import logger
 import socket
 
 # Добавляем родительскую директорию в путь
