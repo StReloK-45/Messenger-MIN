@@ -15,7 +15,6 @@ from ..right_panel import RightPanel
 from ..top_bar import TopBar
 from ..theme_manager import ThemeManager
 from ..friends_manager import FriendsManager
-from ..chat_input import ChatInput
 from .color_manager import ColorManager
 from .data_manager import DataManager
 from .ui_components import UIComponents
@@ -41,7 +40,6 @@ class ChatUI:
         self.top_bar = TopBar(self)
         self.theme_manager = ThemeManager(self)
         self.friends_manager = FriendsManager(self)
-        self.chat_input = ChatInput(self)  # <--- ЭТО ВАЖНО!
         
         # Компоненты UI
         self._chat_canvas = None
@@ -88,9 +86,8 @@ class ChatUI:
         self.left_panel.update_chats_list()
     
     def add_emoji(self):
-        """Открывает окно выбора смайликов через chat_input"""
-        if self.chat_input:
-            self.chat_input.add_emoji()
+        if self.ui_components.message_entry:
+            self.ui_components.message_entry.insert(tk.END, "😊")
     
     def add_log(self, text):
         print(f"[LOG] {text}")
