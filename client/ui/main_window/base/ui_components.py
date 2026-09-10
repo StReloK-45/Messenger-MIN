@@ -162,10 +162,10 @@ class UIComponents:
         input_bg.pack(fill=tk.X, padx=15, pady=8)
         
         tk.Button(input_bg, text="😊", font=("Segoe UI Emoji", 16),
-                  bg=self.ui.color_manager.get_color('input_bg'),
-                  fg=self.ui.color_manager.get_color('text'),
-                  relief=tk.FLAT, cursor="hand2", bd=0,
-                  command=self.ui.add_emoji).pack(side=tk.LEFT, padx=(5, 0), pady=2)
+                bg=self.ui.color_manager.get_color('input_bg'),
+                fg=self.ui.color_manager.get_color('text'),
+                relief=tk.FLAT, cursor="hand2", bd=0,
+                command=lambda: self._open_emoji_panel()).pack(side=tk.LEFT, padx=(5, 0), pady=2)
         
         self.message_entry = tk.Entry(input_bg,
                                       font=("Segoe UI", self.ui.app.settings.font_size),
@@ -201,3 +201,59 @@ class UIComponents:
         # Принудительное обновление
         self.chat_canvas.update_idletasks()
         self.messages_frame.update_idletasks()
+    def _open_emoji_panel(self):
+        """Открывает панель смайликов"""
+        if self.message_entry is None:
+            return
+        
+        emoji_window = tk.Toplevel(self.ui.app.root)
+        emoji_window.title("Выберите смайлик")
+        emoji_window.geometry("400x300")
+        emoji_window.configure(bg=self.ui.color_manager.get_color('bg'))
+        emoji_window.transient(self.ui.app.root)
+        emoji_window.grab_set()
+        
+        emoji_window.update_idletasks()
+        x = (emoji_window.winfo_screenwidth() // 2) - 200
+        y = (emoji_window.winfo_screenheight() // 2) - 150
+        emoji_window.geometry(f"+{x}+{y}")
+        
+        canvas = tk.Canvas(emoji_window, bg=self.ui.color_manager.get_color('bg'), highlightthickness=0)
+        scrollbar = tk.Scrollbar(emoji_window, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.ui.color_manager.get_color('bg'))
+        
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        emojis = [
+            "😊", "😂", "❤️", "😍", "👍", "🔥", "🥲", "😭", "😎", "🤔",
+            "😡", "🥺", "😱", "🎉", "✨", "💀", "🤣", "💯", "👀", "💔",
+            "😈", "👋", "🤝", "🙏", "💪", "🍺", "🍻", "🎮", "💻", "🚀"
+        ]
+        
+        row = 0
+        col = 0
+        entry = self.message_entry
+        
+        def insert(e):
+            entry.insert(tk.INSERT, e)
+            emoji_window.destroy()
+        
+        for emoji in emojis:
+            btn = tk.Button(scrollable_frame, text=emoji, font=("Segoe UI Emoji", 16),
+                        bg=self.ui.color_manager.get_color('bg'),
+                        fg=self.ui.color_manager.get_color('text'),
+                        relief=tk.FLAT, cursor="hand2",
+                        command=lambda e=emoji: insert(e))
+            btn.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
+            col += 1
+            if col >= 8:
+                col = 0
+                row += 1
+        
+        for i in range(8):
+            scrollable_frame.columnconfigure(i, weight=1)

@@ -86,8 +86,10 @@ class ChatUI:
         self.left_panel.update_chats_list()
     
     def add_emoji(self):
-        if self.ui_components.message_entry:
-            self.ui_components.message_entry.insert(tk.END, "😊")
+        from ..chat_input import ChatInput
+        chat_input = ChatInput(self)
+        chat_input.message_entry = self.ui_components.message_entry
+        chat_input.add_emoji()
     
     def add_log(self, text):
         print(f"[LOG] {text}")
